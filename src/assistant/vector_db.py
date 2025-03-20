@@ -1,35 +1,59 @@
 import os
-from langchain_community.document_loaders import DirectoryLoader
-from langchain_experimental.text_splitter import SemanticChunker 
-from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_huggingface import HuggingFaceEmbeddings
-from langchain_chroma import Chroma
+from langchain.embeddings import HuggingFaceEmbeddings
+from langchain_community.document_loaders import DirectoryLoader, CSVLoader, TextLoader, PDFPlumberLoader
+from src.assistant.rag_helpers import load_embed, similarity_search_for_tenant, get_tenant_vectorstore
 
 VECTOR_DB_PATH = "database"
- 
+DEFAULT_TENANT_ID = "default"
+
+def get_embedding_model():
+    """Get the embedding model."""
+    return HuggingFaceEmbeddings()
+
 def get_or_create_vector_db():
     """Get or create the vector DB."""
-    embeddings = HuggingFaceEmbeddings()
-
-    if os.path.exists(VECTOR_DB_PATH) and os.listdir(VECTOR_DB_PATH):
-        # Use the existing vector store
-        vectorstore = Chroma(persist_directory=VECTOR_DB_PATH, embedding_function=embeddings)
+    embeddings = get_embedding_model()
+    
+    # Use the default tenant ID
+    tenant_id = DEFAULT_TENANT_ID
+    
+    # Check if the vector DB exists
+    tenant_vdb_dir = os.path.join(VECTOR_DB_PATH, tenant_id)
+    if os.path.exists(tenant_vdb_dir) and os.listdir(tenant_vdb_dir):
+        # Use the existing vector store with the default tenant
+        vectorstore = get_tenant_vectorstore(
+            tenant_id=tenant_id,
+            embed_llm=embeddings,
+            persist_directory=VECTOR_DB_PATH,
+            similarity="cosine",
+            normal=True
+        )
     else:
-        # Load documents and create a new vector store
-        loader = DirectoryLoader("./files")
-        docs = loader.load()
-
-        # Process the new documents
-        semantic_text_splitter = SemanticChunker(embeddings)
-        documents = semantic_text_splitter.split_documents(docs)
-
-        # Split resulting documents into smaller chunks SemanticChunker
-        # doesn't have a max chunk size parameter, so we use 
-        # RecursiveCharacterTextSplitter to avoid having large chunks
-        text_splitter = RecursiveCharacterTextSplitter(chunk_size=2000, chunk_overlap=400)
-        split_documents = text_splitter.split_documents(documents)
-        vectorstore = Chroma.from_documents(split_documents, embeddings, persist_directory=VECTOR_DB_PATH)
-
+        # If no documents are loaded yet, create an empty directory structure
+        os.makedirs(tenant_vdb_dir, exist_ok=True)
+        vectorstore = get_tenant_vectorstore(
+            tenant_id=tenant_id,
+            embed_llm=embeddings,
+            persist_directory=VECTOR_DB_PATH,
+            similarity="cosine",
+            normal=True
+        )
+        
+        # Check if there are files to load
+        if os.path.exists("./files") and os.listdir("./files"):
+            # Load documents and create a new vector store
+            load_embed(
+                folder="./files",
+                vdbdir=VECTOR_DB_PATH,
+                embed_llm=embeddings,
+                similarity="cosine",
+                c_size=2000,
+                c_overlap=400,
+                normal=True,
+                clean=True,
+                tenant_id=tenant_id
+            )
+    
     return vectorstore
 
 def add_documents(documents):
@@ -39,28 +63,66 @@ def add_documents(documents):
     Args:
         documents: List of documents to add to the vector store
     """
-    embeddings = HuggingFaceEmbeddings()
+    embeddings = get_embedding_model()
+    tenant_id = DEFAULT_TENANT_ID
     
-    # Process the new documents
-    semantic_text_splitter = SemanticChunker(embeddings)
-    documents = semantic_text_splitter.split_documents(documents)
+    # Create a temporary directory to store the documents
+    temp_dir = "./temp_files"
+    os.makedirs(temp_dir, exist_ok=True)
+    
+    # Save the documents to the temporary directory
+    for i, doc in enumerate(documents):
+        file_path = os.path.join(temp_dir, f"document_{i}.txt")
+        with open(file_path, "w") as f:
+            f.write(doc.page_content)
+    
+    # Load and embed the documents
+    load_embed(
+        folder=temp_dir,
+        vdbdir=VECTOR_DB_PATH,
+        embed_llm=embeddings,
+        similarity="cosine",
+        c_size=2000,
+        c_overlap=400,
+        normal=True,
+        clean=True,
+        tenant_id=tenant_id
+    )
+    
+    # Clean up the temporary directory
+    for file in os.listdir(temp_dir):
+        os.remove(os.path.join(temp_dir, file))
+    os.rmdir(temp_dir)
+    
+    # Return the updated vector store
+    return get_or_create_vector_db()
 
-    # Split resulting documents into smaller chunks SemanticChunker
-    # doesn't have a max chunk size parameter, so we use 
-    # RecursiveCharacterTextSplitter to avoid having large chunks
-    text_splitter = RecursiveCharacterTextSplitter(chunk_size=2000, chunk_overlap=400)
-    split_documents = text_splitter.split_documents(documents)
-
-    if os.path.exists(VECTOR_DB_PATH) and os.listdir(VECTOR_DB_PATH):
-        # Add to existing vector store
-        vectorstore = Chroma(persist_directory=VECTOR_DB_PATH, embedding_function=embeddings)
-        vectorstore.add_documents(split_documents)
-    else:
-        # Create new vector store if it doesn't exist
-        vectorstore = Chroma.from_documents(
-            split_documents,
-            embeddings,
-            persist_directory=VECTOR_DB_PATH
+def search_documents(query, k=3):
+    """
+    Search for documents in the vector store.
+    
+    Args:
+        query: The query to search for
+        k: The number of documents to return
+        
+    Returns:
+        List of documents
+    """
+    embeddings = get_embedding_model()
+    tenant_id = DEFAULT_TENANT_ID
+    
+    try:
+        # Use similarity_search_for_tenant to search for documents
+        documents = similarity_search_for_tenant(
+            tenant_id=tenant_id,
+            embed_llm=embeddings,
+            persist_directory=VECTOR_DB_PATH,
+            similarity="cosine",
+            normal=True,
+            query=query,
+            k=k
         )
-
-    return vectorstore
+        return documents
+    except Exception as e:
+        print(f"Error searching for documents: {e}")
+        return []

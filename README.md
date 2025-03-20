@@ -131,6 +131,14 @@ By default, the researcher runs locally using the **DeepSeek R1 model** on **Oll
      OPENROUTER_API_KEY=your_openai_key
      ```
 
+## **Recent Updates**
+
+- **Enhanced Embedding and Retrieval Process**: Updated the system to use a more robust embedding and retrieval process with support for multi-tenancy, allowing for separate vector databases for different tenants.
+  
+- **Improved Document Processing**: Enhanced PDF document handling and text extraction for better information retrieval.
+
+- **Model Selection**: Added support for multiple LLM models including deepseek-r1:latest, deepseek-r1:7b, llama3:8b, llama3:70b, mistral:7b, and mixtral:8x7b.
+
 ## **📚 Further Reading & Resources**
 
 * Langchain: Building a fully local "deep researcher" with DeepSeek-R1[see](https://www.youtube.com/watch?v=sGUjmyfof4Q) 

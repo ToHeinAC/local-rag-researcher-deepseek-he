@@ -40,7 +40,23 @@ def format_documents_with_metadata(documents):
 
     return "\n\n---\n\n".join(formatted_docs)
 
+def get_configured_llm_model(default_model='deepseek-r1:latest'):
+    """
+    Get the configured LLM model name from environment variable or use the default.
+    
+    Args:
+        default_model (str): Default model to use if not configured
+        
+    Returns:
+        str: The model name to use
+    """
+    return os.environ.get('LLM_MODEL', default_model)
+
 def invoke_ollama(model, system_prompt, user_prompt, output_format=None):
+    # Use the configured model if none is specified
+    if model is None:
+        model = get_configured_llm_model()
+        
     messages = [
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": user_prompt}
@@ -143,33 +159,40 @@ def get_report_structures(reports_folder="report_structures"):
     return report_structures
 
 def process_uploaded_files(uploaded_files):
-    temp_folder = "temp_files"
-    os.makedirs(temp_folder, exist_ok=True)
-
+    # Create files directory if it doesn't exist
+    files_folder = "files"
+    os.makedirs(files_folder, exist_ok=True)
+    
     try:
         for uploaded_file in uploaded_files:
-            file_extension = uploaded_file.name.split(".")[-1].lower()
-            temp_file_path = os.path.join(temp_folder, uploaded_file.name)
-
-            # Save file temporarily
-            with open(temp_file_path, "wb") as f:
+            # Save file to the files folder
+            file_path = os.path.join(files_folder, uploaded_file.name)
+            
+            # Save file
+            with open(file_path, "wb") as f:
                 f.write(uploaded_file.getvalue())
-
-            # Choose the appropriate loader
-            if file_extension == "csv":
-                loader = CSVLoader(temp_file_path)
-            elif file_extension in ["txt", "md"]:
-                loader = TextLoader(temp_file_path)
-            elif file_extension == "pdf":
-                loader = PDFPlumberLoader(temp_file_path)
-            else:
-                continue
-
-            # Load and append documents
-            docs = loader.load()
-            add_documents(docs)
-
+        
+        # Process all files in the folder using the new embedding approach
+        from src.assistant.rag_helpers import load_embed
+        from src.assistant.vector_db import get_embedding_model, VECTOR_DB_PATH, DEFAULT_TENANT_ID
+        
+        # Get the embedding model
+        embeddings = get_embedding_model()
+        
+        # Load and embed the documents
+        load_embed(
+            folder=files_folder,
+            vdbdir=VECTOR_DB_PATH,
+            embed_llm=embeddings,
+            similarity="cosine",
+            c_size=2000,
+            c_overlap=400,
+            normal=True,
+            clean=True,
+            tenant_id=DEFAULT_TENANT_ID
+        )
+        
         return True
-    finally:
-        # Remove the temp folder and its contents
-        shutil.rmtree(temp_folder, ignore_errors=True)
+    except Exception as e:
+        print(f"Error processing files: {e}")
+        return False

@@ -4,7 +4,7 @@ from langgraph.constants import Send
 from langgraph.graph import START, END, StateGraph
 from langchain_core.runnables.config import RunnableConfig
 from src.assistant.configuration import Configuration
-from src.assistant.vector_db import get_or_create_vector_db
+from src.assistant.vector_db import get_or_create_vector_db, search_documents
 from src.assistant.state import ResearcherState, ResearcherStateInput, ResearcherStateOutput, QuerySearchState, QuerySearchStateInput, QuerySearchStateOutput
 from src.assistant.prompts import RESEARCH_QUERY_WRITER_PROMPT, RELEVANCE_EVALUATOR_PROMPT, SUMMARIZER_PROMPT, REPORT_WRITER_PROMPT
 from src.assistant.utils import format_documents_with_metadata, invoke_llm, invoke_ollama, parse_output, tavily_search, Evaluation, Queries
@@ -17,6 +17,7 @@ def generate_research_queries(state: ResearcherState, config: RunnableConfig):
     print("--- Generating research queries ---")
     user_instructions = state["user_instructions"]
     max_queries = config["configurable"].get("max_search_queries", 3)
+    llm_model = config["configurable"].get("llm_model", "deepseek-r1:latest")
     
     query_writer_prompt = RESEARCH_QUERY_WRITER_PROMPT.format(
         max_queries=max_queries,
@@ -25,7 +26,7 @@ def generate_research_queries(state: ResearcherState, config: RunnableConfig):
     
     # Using local Deepseek R1 model with Ollama
     result = invoke_ollama(
-        model='deepseek-r1:7b',
+        model=llm_model,
         system_prompt=query_writer_prompt,
         user_prompt=f"Generate research queries for this user instruction: {user_instructions}",
         output_format=Queries
@@ -86,15 +87,16 @@ def retrieve_rag_documents(state: QuerySearchState):
     """Retrieve documents from the RAG database."""
     print("--- Retrieving documents ---")
     query = state["query"]
-    vectorstore = get_or_create_vector_db()
-    vectorstore_retreiver = vectorstore.as_retriever(search_type="similarity", search_kwargs={"k": 3})
-    documents = vectorstore_retreiver.invoke(query)
-
+    
+    # Use the new search_documents function from vector_db.py
+    documents = search_documents(query, k=3)
+    
     return {"retrieved_documents": documents}
 
-def evaluate_retrieved_documents(state: QuerySearchState):
+def evaluate_retrieved_documents(state: QuerySearchState, config: RunnableConfig):
     query = state["query"]
     retrieved_documents = state["retrieved_documents"]
+    llm_model = config["configurable"].get("llm_model", "deepseek-r1:latest")
     evaluation_prompt = RELEVANCE_EVALUATOR_PROMPT.format(
         query=query,
         documents=format_documents_with_metadata(retrieved_documents)
@@ -102,7 +104,7 @@ def evaluate_retrieved_documents(state: QuerySearchState):
     
     # Using local Deepseek R1 model with Ollama
     evaluation = invoke_ollama(
-        model='deepseek-r1:7b',
+        model=llm_model,
         system_prompt=evaluation_prompt,
         user_prompt=f"Evaluate the relevance of the retrieved documents for this query: {query}",
         output_format=Evaluation
@@ -136,8 +138,9 @@ def web_research(state: QuerySearchState):
 
     return {"web_search_results": search_results}
 
-def summarize_query_research(state: QuerySearchState):
+def summarize_query_research(state: QuerySearchState, config: RunnableConfig):
     query = state["query"]
+    llm_model = config["configurable"].get("llm_model", "deepseek-r1:latest")
 
     information = None
     if state["are_documents_relevant"]:
@@ -155,7 +158,7 @@ def summarize_query_research(state: QuerySearchState):
     
     # Using local Deepseek R1 model with Ollama
     summary = invoke_ollama(
-        model='deepseek-r1:7b',
+        model=llm_model,
         system_prompt=summary_prompt,
         user_prompt=f"Generate a research summary for this query: {query}"
     )
@@ -174,6 +177,7 @@ def summarize_query_research(state: QuerySearchState):
 def generate_final_answer(state: ResearcherState, config: RunnableConfig):
     print("--- Generating final answer ---")
     report_structure = config["configurable"].get("report_structure", "")
+    llm_model = config["configurable"].get("llm_model", "deepseek-r1:latest")
     answer_prompt = REPORT_WRITER_PROMPT.format(
         instruction=state["user_instructions"],
         report_structure=report_structure,
@@ -182,7 +186,7 @@ def generate_final_answer(state: ResearcherState, config: RunnableConfig):
 
     # Using local Deepseek R1 model with Ollama
     result = invoke_ollama(
-        model='deepseek-r1:7b',
+        model=llm_model,
         system_prompt=answer_prompt,
         user_prompt=f"Generate a research summary using the provided information."
     )

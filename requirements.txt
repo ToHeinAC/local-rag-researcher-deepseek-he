@@ -14,3 +14,7 @@ streamlit
 streamlit_nested_layout
 pdfplumber
 pyperclip
+PyMuPDF
+langchain
+langchain_community
+nltk

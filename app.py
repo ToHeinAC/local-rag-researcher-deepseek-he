@@ -1,13 +1,26 @@
-import pyperclip
 import streamlit as st
 import streamlit_nested_layout
+import warnings
+import logging
+
+# Suppress specific PyTorch warnings
+warnings.filterwarnings("ignore", category=RuntimeWarning)
+logging.getLogger("streamlit").setLevel(logging.ERROR)
+
 from src.assistant.graph import researcher
 from src.assistant.utils import get_report_structures, process_uploaded_files
 from dotenv import load_dotenv
 
+# Try to import pyperclip, but handle if it's not available
+try:
+    import pyperclip
+    PYPERCLIP_AVAILABLE = True
+except (ImportError, Exception):
+    PYPERCLIP_AVAILABLE = False
+
 load_dotenv()
 
-def generate_response(user_input, enable_web_search, report_structure, max_search_queries):
+def generate_response(user_input, enable_web_search, report_structure, max_search_queries, llm_model):
     """
     Generate response using the researcher agent and stream steps
     """
@@ -21,6 +34,7 @@ def generate_response(user_input, enable_web_search, report_structure, max_searc
         "enable_web_search": enable_web_search,
         "report_structure": report_structure,
         "max_search_queries": max_search_queries,
+        "llm_model": llm_model,
     }}
 
     # Create the status for the global "Researcher" process
@@ -65,6 +79,16 @@ def clear_chat():
     st.session_state.processing_complete = False
     st.session_state.uploader_key = 0
 
+def copy_to_clipboard(text):
+    """Safely copy text to clipboard if pyperclip is available"""
+    if PYPERCLIP_AVAILABLE:
+        try:
+            pyperclip.copy(text)
+            return True
+        except Exception:
+            return False
+    return False
+
 def main():
     st.set_page_config(page_title="DeepSeek RAG Researcher", layout="wide")
 
@@ -81,6 +105,8 @@ def main():
         st.session_state.max_search_queries = 5  # Default value of 5
     if "files_ready" not in st.session_state:
         st.session_state.files_ready = False  # Tracks if files are uploaded but not processed
+    if "llm_model" not in st.session_state:
+        st.session_state.llm_model = "deepseek-r1:latest"  # Default LLM model
 
     # Title row with clear button
     col1, col2 = st.columns([6, 1])
@@ -93,6 +119,15 @@ def main():
 
     # Sidebar configuration
     st.sidebar.title("Research Settings")
+
+    # Add LLM model selector to sidebar
+    llm_models = ["deepseek-r1:latest", "deepseek-r1:70b", "qwq", "gemma3:27b", "mistral-small:latest"]
+    st.session_state.llm_model = st.sidebar.selectbox(
+        "Select LLM Model",
+        options=llm_models,
+        index=llm_models.index(st.session_state.llm_model),
+        help="Choose the LLM model to use for research"
+    )
 
     # Add report structure selector to sidebar
     report_structures = get_report_structures()
@@ -155,9 +190,9 @@ def main():
             st.write(message["content"])  # Show the message normally
 
             # Show copy button only for AI messages at the bottom
-            if message["role"] == "assistant":
+            if message["role"] == "assistant" and PYPERCLIP_AVAILABLE:
                 if st.button("📋", key=f"copy_{len(st.session_state.messages)}"):
-                    pyperclip.copy(message["content"])
+                    copy_to_clipboard(message["content"])
 
     # Chat input and response handling
     if user_input := st.chat_input("Type your message here..."):
@@ -172,18 +207,20 @@ def main():
             user_input, 
             enable_web_search, 
             report_structure,
-            st.session_state.max_search_queries
+            st.session_state.max_search_queries,
+            st.session_state.llm_model
         )
 
         # Store assistant message
-        st.session_state.messages.append({"role": "assistant", "content": assistant_response["final_answer"]})
+        st.session_state.messages.append({"role": "assistant", "content": assistant_response})
 
         with st.chat_message("assistant"):
-            st.write(assistant_response["final_answer"])  # AI response
+            st.write(assistant_response)  # AI response
 
             # Copy button below the AI message
-            if st.button("📋", key=f"copy_{len(st.session_state.messages)}"):
-                pyperclip.copy(assistant_response["final_answer"])
+            if PYPERCLIP_AVAILABLE:
+                if st.button("📋", key=f"copy_{len(st.session_state.messages)}"):
+                    copy_to_clipboard(assistant_response)
 
 if __name__ == "__main__":
     main()
