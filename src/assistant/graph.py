@@ -200,6 +200,7 @@ def generate_final_answer(state: ResearcherState, config: RunnableConfig):
     #     user_prompt=f"Generate a research summary using the provided information."
     # )
     
+    # Return the answer as a dictionary with 'final_answer' key
     return {"final_answer": answer}
 
 # Create subghraph for searching each query

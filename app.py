@@ -90,7 +90,14 @@ def copy_to_clipboard(text):
     return False
 
 def main():
-    st.set_page_config(page_title="DeepSeek RAG Researcher", layout="wide")
+    st.set_page_config(page_title="RAG Deep Researcher", layout="wide")
+    
+    # Create header with two columns
+    header_col1, header_col2 = st.columns([0.6, 0.4])
+    with header_col1:
+        st.title("📄 RAG Deep Researcher")
+    with header_col2:
+        st.image("Header für Chatbot.png", use_container_width=True)
 
     # Initialize session states
     if "processing_complete" not in st.session_state:
@@ -108,14 +115,10 @@ def main():
     if "llm_model" not in st.session_state:
         st.session_state.llm_model = "deepseek-r1:latest"  # Default LLM model
 
-    # Title row with clear button
-    col1, col2 = st.columns([6, 1])
-    with col1:
-        st.title("📄 RAG Researcher with DeepSeek R1")
-    with col2:
-        if st.button("Clear Chat", use_container_width=True):
-            clear_chat()
-            st.rerun()
+    # Clear chat button in a single column
+    if st.button("Clear Chat", use_container_width=True):
+        clear_chat()
+        st.rerun()
 
     # Sidebar configuration
     st.sidebar.title("Research Settings")
@@ -187,7 +190,7 @@ def main():
     # Display chat messages
     for message in st.session_state.messages:
         with st.chat_message(message["role"]):
-            st.write(message["content"])  # Show the message normally
+            st.markdown(message["content"], unsafe_allow_html=False)  # Use markdown for proper rendering
 
             # Show copy button only for AI messages at the bottom
             if message["role"] == "assistant" and PYPERCLIP_AVAILABLE:
@@ -199,7 +202,7 @@ def main():
         # Add user message
         st.session_state.messages.append({"role": "user", "content": user_input})
         with st.chat_message("user"):
-            st.write(user_input)
+            st.markdown(user_input, unsafe_allow_html=False)  # Use markdown for proper rendering
 
         # Generate and display assistant response
         report_structure = st.session_state.selected_report_structure["content"]
@@ -215,7 +218,10 @@ def main():
         st.session_state.messages.append({"role": "assistant", "content": assistant_response})
 
         with st.chat_message("assistant"):
-            st.write(assistant_response)  # AI response
+            try:
+                st.markdown(assistant_response['final_answer'], unsafe_allow_html=False)  # Use markdown for proper rendering
+            except:
+                st.markdown(assistant_response, unsafe_allow_html=False)
 
             # Copy button below the AI message
             if PYPERCLIP_AVAILABLE:

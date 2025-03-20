@@ -6,6 +6,7 @@ from tavily import TavilyClient
 from pydantic import BaseModel
 from langchain_community.document_loaders import CSVLoader, TextLoader, PDFPlumberLoader
 from src.assistant.vector_db import add_documents
+import torch
 
 class Evaluation(BaseModel):
     is_relevant: bool
@@ -14,9 +15,39 @@ class Queries(BaseModel):
     queries: list[str]
 
 def parse_output(text):
-    think = re.search(r'<think>(.*?)</think>', text, re.DOTALL).group(1).strip()
-    output = re.search(r'</think>\s*(.*?)$', text, re.DOTALL).group(1).strip()
-
+    # First try to extract thinking part if it exists
+    think_match = re.search(r'<think>(.*?)</think>', text, re.DOTALL)
+    
+    if think_match:
+        think = think_match.group(1).strip()
+        output = re.search(r'</think>\s*(.*?)$', text, re.DOTALL).group(1).strip()
+    else:
+        think = None
+        output = text.strip()
+    
+    # Check if the output is in JSON format with key-value pairs
+    try:
+        import json
+        
+        # Check if the text looks like JSON
+        if (output.startswith('{') and output.endswith('}')) or (output.startswith('[') and output.endswith(']')):
+            # Try to parse as JSON
+            json_obj = json.loads(output)
+            
+            # If it's a dict with a 'final_answer' or similar key, extract just the value
+            if isinstance(json_obj, dict):
+                # Look for common keys that might contain the main content
+                for key in ['final_answer', 'answer', 'response', 'content', 'result', 'output']:
+                    if key in json_obj:
+                        output = json_obj[key]
+                        break
+                # If no specific key was found but there's only one value, use that
+                if len(json_obj) == 1:
+                    output = list(json_obj.values())[0]
+    except (json.JSONDecodeError, ValueError, AttributeError):
+        # If it's not valid JSON or any other error occurs, keep the original output
+        pass
+    
     return {
         "reasoning": think,
         "response": output
@@ -196,3 +227,19 @@ def process_uploaded_files(uploaded_files):
     except Exception as e:
         print(f"Error processing files: {e}")
         return False
+
+def clear_cuda_memory():
+    """
+    Clear CUDA memory cache to free up GPU resources between queries.
+    Only has an effect if CUDA is available.
+    """
+    if torch.cuda.is_available():
+        # Empty the cache
+        torch.cuda.empty_cache()
+        
+        # Force garbage collection
+        import gc
+        gc.collect()
+        
+        print("CUDA memory cache cleared")
+    return
