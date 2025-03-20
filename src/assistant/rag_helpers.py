@@ -71,6 +71,12 @@ def get_tenant_vectorstore(tenant_id, embed_llm, persist_directory, similarity, 
     )
 
 def similarity_search_for_tenant(tenant_id, embed_llm, persist_directory, similarity, normal, query, k=2):
+    # Import clear_cuda_memory here to avoid circular imports
+    from src.assistant.utils import clear_cuda_memory
+    
+    # Clear CUDA memory before search
+    clear_cuda_memory()
+    
     # Get tenant-specific directory
     tenant_vdb_dir = os.path.join(persist_directory, tenant_id)
     
@@ -89,16 +95,37 @@ def similarity_search_for_tenant(tenant_id, embed_llm, persist_directory, simila
         collection_metadata={"hnsw:space": similarity, "normalize_embeddings": normal}
     )
     
-    # Perform similarity search
-    results = vectorstore.similarity_search(query, k=k)
-    
-    # Clean up
-    vectorstore._client = None
-    del vectorstore
-    
-    return results
+    try:
+        # Perform similarity search
+        results = vectorstore.similarity_search(query, k=k)
+        
+        # Clean up
+        vectorstore._client = None
+        del vectorstore
+        
+        # Clear CUDA memory after search
+        clear_cuda_memory()
+        
+        return results
+    except Exception as e:
+        # Clean up in case of error
+        if vectorstore:
+            vectorstore._client = None
+            del vectorstore
+        
+        # Clear CUDA memory in case of error
+        clear_cuda_memory()
+        
+        # Re-raise the exception
+        raise e
 
 def load_embed(folder, vdbdir, embed_llm, similarity="cosine", c_size=1000, c_overlap=200, normal=True, clean=True, tenant_id=None):    
+    # Import clear_cuda_memory here to avoid circular imports
+    from src.assistant.utils import clear_cuda_memory
+    
+    # Clear CUDA memory before starting embedding process
+    clear_cuda_memory()
+    
     dirname = vdbdir
     # Now load and embed
     print(f"Step: Check for new data and embed new data to new vector DB '{dirname}'")
@@ -155,11 +182,17 @@ def load_embed(folder, vdbdir, embed_llm, similarity="cosine", c_size=1000, c_ov
     newchunkslen = len(new_chunks)
 
     if new_chunks:
+        # Clear CUDA memory before adding documents
+        clear_cuda_memory()
+        
         # Add the new chunks to the vector store with their embeddings
         vectorstore.add_documents(new_chunks, ids=new_vector_ids)
         print(f"Collection count after adding: {vectorstore._collection.count()}")
         vectorstore.persist()
         print(f"#{docslen} files embedded via #{newchunkslen} chunks in vector database.")
+        
+        # Clear CUDA memory after adding documents
+        clear_cuda_memory()
     else:
         # Already existing
         print(f"Chunks already available, no new chunks added to vector database.")

@@ -8,7 +8,7 @@ DEFAULT_TENANT_ID = "default"
 
 def get_embedding_model():
     """Get the embedding model."""
-    return HuggingFaceEmbeddings()
+    return HuggingFaceEmbeddings(model_kwargs={'device': 'cpu'})
 
 def get_or_create_vector_db():
     """Get or create the vector DB."""
@@ -108,6 +108,12 @@ def search_documents(query, k=3):
     Returns:
         List of documents
     """
+    # Import clear_cuda_memory here to avoid circular imports
+    from src.assistant.utils import clear_cuda_memory
+    
+    # Clear CUDA memory before embedding
+    clear_cuda_memory()
+    
     embeddings = get_embedding_model()
     tenant_id = DEFAULT_TENANT_ID
     
@@ -122,7 +128,13 @@ def search_documents(query, k=3):
             query=query,
             k=k
         )
+        
+        # Clear CUDA memory after embedding
+        clear_cuda_memory()
+        
         return documents
     except Exception as e:
         print(f"Error searching for documents: {e}")
+        # Clear CUDA memory in case of error
+        clear_cuda_memory()
         return []

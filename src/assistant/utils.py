@@ -5,7 +5,6 @@ from ollama import chat
 from tavily import TavilyClient
 from pydantic import BaseModel
 from langchain_community.document_loaders import CSVLoader, TextLoader, PDFPlumberLoader
-from src.assistant.vector_db import add_documents
 import torch
 
 class Evaluation(BaseModel):

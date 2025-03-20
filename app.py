@@ -2,13 +2,14 @@ import streamlit as st
 import streamlit_nested_layout
 import warnings
 import logging
+import torch
 
 # Suppress specific PyTorch warnings
 warnings.filterwarnings("ignore", category=RuntimeWarning)
 logging.getLogger("streamlit").setLevel(logging.ERROR)
 
 from src.assistant.graph import researcher
-from src.assistant.utils import get_report_structures, process_uploaded_files
+from src.assistant.utils import get_report_structures, process_uploaded_files, clear_cuda_memory
 from dotenv import load_dotenv
 
 # Try to import pyperclip, but handle if it's not available
@@ -24,6 +25,9 @@ def generate_response(user_input, enable_web_search, report_structure, max_searc
     """
     Generate response using the researcher agent and stream steps
     """
+    # Clear CUDA memory before processing a new query
+    clear_cuda_memory()
+    
     # Initialize state for the researcher
     initial_state = {
         "user_instructions": user_input,
