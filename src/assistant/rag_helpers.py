@@ -4,9 +4,9 @@ from datetime import datetime
 from langchain_core.runnables import chain
 from langchain_community.document_loaders import DirectoryLoader
 from langchain.schema import Document
-from langchain.vectorstores import Chroma
+from langchain_community.vectorstores import Chroma
 from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain.embeddings import HuggingFaceEmbeddings
+from langchain_community.embeddings import HuggingFaceEmbeddings
 from typing import List
 import nltk
 

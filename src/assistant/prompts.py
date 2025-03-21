@@ -6,9 +6,11 @@ Your output must only be a JSON object containing a single key "queries":
 {{ "queries": ["Query 1", "Query 2",...] }}
 
 # NOTE:
-* You can generate up to {max_queries} queries, but only as many as needed to effectively address the user's research goal.
+* Always include the original user query in the queries.
+* You can generate up to {max_queries} additional queries, but only as many as needed to effectively address the user's research goal.
 * Focus on the user's intent and break down complex tasks into manageable queries.
 * Avoid generating excessive or redundant queries.
+* Take semantic nuances and different terms for the same facts of the case into account, like "release" or "clearance" as alternative to "approval".
 * Ensure the queries are specific enough to retrieve relevant information but broad enough to cover the scope of the task.
 * If the instruction is ambiguous, generate queries that address possible interpretations.
 * **Today is: {date}**
@@ -39,12 +41,18 @@ RELEVANCE_EVALUATOR_PROMPT = """Your goal is to evaluate and determine if the pr
 SUMMARIZER_PROMPT="""Your goal is to generate a focused, evidence-based research summary from the provided documents.
 
 KEY OBJECTIVES:
-1. Extract and synthesize critical findings from each source
-2. Present key data points and metrics that support main conclusions
-3. Identify emerging patterns and significant insights
-4. Structure information in a clear, logical flow
+1. Synthesize critical and relevant findings from each retrieved document to a final answer
+2. You must return the retrieved critical and relevant findings literally (as far as semantically possible)
+3. You must return information regarding relevant sections, paragraphs and so on in your answer
+4. You must cite the source document in the form e.g. [source document.pdf] in your answer using the original document filename
+5. You must present key data points and metrics that support main conclusions
+6. Identify emerging patterns and significant insights
+7. Structure information in a clear, logical flow
 
 REQUIREMENTS:
+- Only take the findings from the retrieved documents into account
+- never hallucinate 
+- In case no relevant findings are in the document, state that you were not able to give a good answer
 - Begin immediately with key findings - no introductions
 - Focus on verifiable data and empirical evidence
 - Keep the summary brief, avoid repetition and unnecessary details
@@ -54,7 +62,7 @@ Query:
 {query}
 
 Retrieved Documents:
-{docmuents}
+{documents}
 """
 
 
@@ -71,8 +79,13 @@ PROVIDED INFORMATION:
 {information}
 
 # **CRITICAL GUIDELINES:**
-- Adhere strictly to the structure specified in the user's instruction.
+- SYNTHESIZE critical and relevant findings from each retrieved document to a final answer
+- In any case ANSWER THE QUESTION SOLELY BASED ON THE PROVIDED INFORMATION and NEVER ASK FOR CLARIFICATION
+- Adhere STRICTLY to the structure specified in the user's instruction.
 - Start IMMEDIATELY with the summary content - no introductions or meta-commentary
+- You HAVE TO CITE THE SOURCE DOCUMENT in the bracket form as for example [source document.pdf] in your answer using the original document filename
 - Focus ONLY on factual, objective information
+- You must return the information from the retrieval process LITERALLY (as far as semantically possible)
+You must return information regarding RELEVANT SECTIONS, PARAGRAPHS and so on in your answer
 - Avoid redundancy, repetition, or unnecessary commentary.
 """

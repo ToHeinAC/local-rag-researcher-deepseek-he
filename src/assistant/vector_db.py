@@ -1,5 +1,5 @@
 import os
-from langchain.embeddings import HuggingFaceEmbeddings
+from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain_community.document_loaders import DirectoryLoader, CSVLoader, TextLoader, PDFPlumberLoader
 from src.assistant.rag_helpers import load_embed, similarity_search_for_tenant, get_tenant_vectorstore
 

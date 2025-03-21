@@ -124,6 +124,76 @@ def main():
         clear_chat()
         st.rerun()
 
+    # Instructions dropdown below the clear chat button
+    with st.expander("📋 How to use this app", expanded=False):
+        st.markdown("""
+        ### How to Use the RAG Deep Researcher
+        
+        1. **Upload Documents** (Optional)
+           - Use the sidebar to upload PDF, TXT, CSV, or MD files
+           - Click "Process Files" to add them to the knowledge base
+        
+        2. **Configure Settings** (Optional)
+           - Select an LLM model from the dropdown menu
+           - Choose a report structure template
+           - Set the maximum number of search queries (1-10)
+           - Enable web search if needed
+        
+        3. **Ask Your Question**
+           - Type your research question in the chat input
+           - Be specific and clear about what information you need
+        
+        4. **Review the Results**
+           - The system will generate research queries based on your question
+           - It will search through documents and summarize findings
+           - A comprehensive final answer will be provided
+           - You can copy the response using the clipboard button
+        
+        5. **Start a New Research**
+           - Click "Clear Chat" to start a new research session
+        """)
+
+    # Display chat messages
+    for message in st.session_state.messages:
+        with st.chat_message(message["role"]):
+            st.markdown(message["content"], unsafe_allow_html=False)  # Use markdown for proper rendering
+
+            # Show copy button only for AI messages at the bottom
+            if message["role"] == "assistant" and PYPERCLIP_AVAILABLE:
+                if st.button("📋", key=f"copy_{len(st.session_state.messages)}"):
+                    copy_to_clipboard(message["content"])
+
+    # Chat input and response handling
+    if user_input := st.chat_input("Type your message here..."):
+        # Add user message
+        st.session_state.messages.append({"role": "user", "content": user_input})
+        with st.chat_message("user"):
+            st.markdown(user_input, unsafe_allow_html=False)  # Use markdown for proper rendering
+
+        # Generate and display assistant response
+        report_structure = st.session_state.selected_report_structure["content"]
+        assistant_response = generate_response(
+            user_input, 
+            enable_web_search, 
+            report_structure,
+            st.session_state.max_search_queries,
+            st.session_state.llm_model
+        )
+
+        # Store assistant message
+        st.session_state.messages.append({"role": "assistant", "content": assistant_response})
+
+        with st.chat_message("assistant"):
+            try:
+                st.markdown(assistant_response['final_answer'], unsafe_allow_html=False)  # Use markdown for proper rendering
+            except:
+                st.markdown(assistant_response, unsafe_allow_html=False)
+
+            # Copy button below the AI message
+            if PYPERCLIP_AVAILABLE:
+                if st.button("📋", key=f"copy_{len(st.session_state.messages)}"):
+                    copy_to_clipboard(assistant_response)
+
     # Sidebar configuration
     st.sidebar.title("Research Settings")
 
@@ -190,47 +260,6 @@ def main():
 
                     status.update(label="Files processed successfully!", state="complete", expanded=False)
                     # st.rerun()
-
-    # Display chat messages
-    for message in st.session_state.messages:
-        with st.chat_message(message["role"]):
-            st.markdown(message["content"], unsafe_allow_html=False)  # Use markdown for proper rendering
-
-            # Show copy button only for AI messages at the bottom
-            if message["role"] == "assistant" and PYPERCLIP_AVAILABLE:
-                if st.button("📋", key=f"copy_{len(st.session_state.messages)}"):
-                    copy_to_clipboard(message["content"])
-
-    # Chat input and response handling
-    if user_input := st.chat_input("Type your message here..."):
-        # Add user message
-        st.session_state.messages.append({"role": "user", "content": user_input})
-        with st.chat_message("user"):
-            st.markdown(user_input, unsafe_allow_html=False)  # Use markdown for proper rendering
-
-        # Generate and display assistant response
-        report_structure = st.session_state.selected_report_structure["content"]
-        assistant_response = generate_response(
-            user_input, 
-            enable_web_search, 
-            report_structure,
-            st.session_state.max_search_queries,
-            st.session_state.llm_model
-        )
-
-        # Store assistant message
-        st.session_state.messages.append({"role": "assistant", "content": assistant_response})
-
-        with st.chat_message("assistant"):
-            try:
-                st.markdown(assistant_response['final_answer'], unsafe_allow_html=False)  # Use markdown for proper rendering
-            except:
-                st.markdown(assistant_response, unsafe_allow_html=False)
-
-            # Copy button below the AI message
-            if PYPERCLIP_AVAILABLE:
-                if st.button("📋", key=f"copy_{len(st.session_state.messages)}"):
-                    copy_to_clipboard(assistant_response)
 
 if __name__ == "__main__":
     main()

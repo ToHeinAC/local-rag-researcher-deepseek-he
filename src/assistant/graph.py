@@ -153,7 +153,7 @@ def summarize_query_research(state: QuerySearchState, config: RunnableConfig):
 
     summary_prompt = SUMMARIZER_PROMPT.format(
         query=query,
-        docmuents=information
+        documents=information
     )
     
     # Using local Deepseek R1 model with Ollama
