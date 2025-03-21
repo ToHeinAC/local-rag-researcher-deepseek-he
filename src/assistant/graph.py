@@ -151,9 +151,12 @@ def summarize_query_research(state: QuerySearchState, config: RunnableConfig):
         # if enabled, otherwise query will be skipped in the previous router node
         information = state["web_search_results"]
 
+    # Format documents with metadata to include sources
+    formatted_information = format_documents_with_metadata(information) if state["are_documents_relevant"] else information
+    
     summary_prompt = SUMMARIZER_PROMPT.format(
         query=query,
-        documents=information
+        documents=formatted_information
     )
     
     # Using local Deepseek R1 model with Ollama

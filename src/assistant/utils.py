@@ -65,7 +65,8 @@ def format_documents_with_metadata(documents):
     formatted_docs = []
     for doc in documents:
         source = doc.metadata.get('source', 'Unknown source')
-        formatted_doc = f"Source: {source}\nContent: {doc.page_content}"
+        # Make source more prominent for easier reference
+        formatted_doc = f"SOURCE: [{source}]\n\nContent: {doc.page_content}"
         formatted_docs.append(formatted_doc)
 
     return "\n\n---\n\n".join(formatted_docs)

@@ -38,54 +38,37 @@ RELEVANCE_EVALUATOR_PROMPT = """Your goal is to evaluate and determine if the pr
 """
 
 
-SUMMARIZER_PROMPT="""Your goal is to generate a focused, evidence-based research summary from the provided documents.
+SUMMARIZER_PROMPT="""You are a research assistant tasked with summarizing information from documents to answer a specific query.
 
-KEY OBJECTIVES:
-1. Synthesize critical and relevant findings from each retrieved document to a final answer
-2. You must return the retrieved critical and relevant findings literally (as far as semantically possible)
-3. You must return information regarding relevant sections, paragraphs and so on in your answer
-4. You must cite the source document in the form e.g. [source document.pdf] in your answer using the original document filename
-5. You must present key data points and metrics that support main conclusions
-6. Identify emerging patterns and significant insights
-7. Structure information in a clear, logical flow
+Query: {query}
 
-REQUIREMENTS:
-- Only take the findings from the retrieved documents into account
-- never hallucinate 
-- In case no relevant findings are in the document, state that you were not able to give a good answer
-- Begin immediately with key findings - no introductions
-- Focus on verifiable data and empirical evidence
-- Keep the summary brief, avoid repetition and unnecessary details
-- Prioritize information directly relevant to the query
-
-Query:
-{query}
-
-Retrieved Documents:
+Documents:
 {documents}
+
+Your task is to create a comprehensive summary that addresses the query based on the provided documents. 
+
+IMPORTANT: When referencing information from specific documents, include the source document name in your summary (e.g., 'According to [document_name]...'). This helps track where information comes from.
+
+You may use <think>...</think> tags to reason through your process, but this will be removed from the final output.
+
+Provide a well-structured, informative summary that directly addresses the query.
 """
 
 
-REPORT_WRITER_PROMPT = """Your goal is to use the provided information to write a comprehensive and accurate report that answers all the user's questions. 
-The report must strictly follow the structure requested by the user.
+REPORT_WRITER_PROMPT = """You are a research assistant tasked with creating a comprehensive report based on the information provided.
 
-USER INSTRUCTION:
-{instruction}
+User instruction: {instruction}
 
-REPORT STRUCTURE:
+Use the following report structure:
 {report_structure}
 
-PROVIDED INFORMATION:
+Information from research:
 {information}
 
-# **CRITICAL GUIDELINES:**
-- SYNTHESIZE critical and relevant findings from each retrieved document to a final answer
-- In any case ANSWER THE QUESTION SOLELY BASED ON THE PROVIDED INFORMATION and NEVER ASK FOR CLARIFICATION
-- Adhere STRICTLY to the structure specified in the user's instruction.
-- Start IMMEDIATELY with the summary content - no introductions or meta-commentary
-- You HAVE TO CITE THE SOURCE DOCUMENT in the bracket form as for example [source document.pdf] in your answer using the original document filename
-- Focus ONLY on factual, objective information
-- You must return the information from the retrieval process LITERALLY (as far as semantically possible)
-You must return information regarding RELEVANT SECTIONS, PARAGRAPHS and so on in your answer
-- Avoid redundancy, repetition, or unnecessary commentary.
-"""
+Your task is to create a comprehensive report that addresses the user's instruction based on the provided information. 
+
+IMPORTANT: When referencing information from specific documents, include the source document name in your answer (e.g., 'According to [document_name]...'). This helps the user understand where the information comes from.
+
+You may use <think>...</think> tags to reason through your process, but this will be removed from the final output.
+
+Provide a well-structured, informative report that directly addresses the user's needs."""

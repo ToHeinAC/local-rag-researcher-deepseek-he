@@ -118,6 +118,44 @@ def main():
         st.session_state.files_ready = False  # Tracks if files are uploaded but not processed
     if "llm_model" not in st.session_state:
         st.session_state.llm_model = "deepseek-r1:latest"  # Default LLM model
+    if "enable_web_search" not in st.session_state:
+        st.session_state.enable_web_search = False  # Default web search setting
+
+    # Sidebar configuration
+    st.sidebar.title("Research Settings")
+
+    # Add LLM model selector to sidebar
+    llm_models = ["deepseek-r1:latest", "deepseek-r1:70b", "qwq", "gemma3:27b", "mistral-small:latest"]
+    st.session_state.llm_model = st.sidebar.selectbox(
+        "Select LLM Model",
+        options=llm_models,
+        index=llm_models.index(st.session_state.llm_model),
+        help="Choose the LLM model to use for research"
+    )
+
+    # Add report structure selector to sidebar
+    report_structures = get_report_structures()
+    default_report = "standard report"
+
+    selected_structure = st.sidebar.selectbox(
+        "Select Report Structure",
+        options=list(report_structures.keys()),
+        index=list(map(str.lower, report_structures.keys())).index(default_report)
+    )
+
+    st.session_state.selected_report_structure = report_structures[selected_structure]
+
+    # Maximum search queries input
+    st.session_state.max_search_queries = st.sidebar.number_input(
+        "Max Number of Search Queries",
+        min_value=1,
+        max_value=10,
+        value=st.session_state.max_search_queries,
+        help="Set the maximum number of search queries to be made. (1-10)"
+    )
+    
+    # Enable web search checkbox
+    st.session_state.enable_web_search = st.sidebar.checkbox("Enable Web Search", value=st.session_state.enable_web_search)
 
     # Clear chat button in a single column
     if st.button("Clear Chat", use_container_width=True):
@@ -174,7 +212,7 @@ def main():
         report_structure = st.session_state.selected_report_structure["content"]
         assistant_response = generate_response(
             user_input, 
-            enable_web_search, 
+            st.session_state.enable_web_search, 
             report_structure,
             st.session_state.max_search_queries,
             st.session_state.llm_model
@@ -193,41 +231,6 @@ def main():
             if PYPERCLIP_AVAILABLE:
                 if st.button("📋", key=f"copy_{len(st.session_state.messages)}"):
                     copy_to_clipboard(assistant_response)
-
-    # Sidebar configuration
-    st.sidebar.title("Research Settings")
-
-    # Add LLM model selector to sidebar
-    llm_models = ["deepseek-r1:latest", "deepseek-r1:70b", "qwq", "gemma3:27b", "mistral-small:latest"]
-    st.session_state.llm_model = st.sidebar.selectbox(
-        "Select LLM Model",
-        options=llm_models,
-        index=llm_models.index(st.session_state.llm_model),
-        help="Choose the LLM model to use for research"
-    )
-
-    # Add report structure selector to sidebar
-    report_structures = get_report_structures()
-    default_report = "standard report"
-
-    selected_structure = st.sidebar.selectbox(
-        "Select Report Structure",
-        options=list(report_structures.keys()),
-        index=list(map(str.lower, report_structures.keys())).index(default_report)
-    )
-
-    st.session_state.selected_report_structure = report_structures[selected_structure]
-
-    # Maximum search queries input
-    st.session_state.max_search_queries = st.sidebar.number_input(
-        "Max Number of Search Queries",
-        min_value=1,
-        max_value=10,
-        value=st.session_state.max_search_queries,
-        help="Set the maximum number of search queries to be made. (1-10)"
-    )
-    
-    enable_web_search = st.sidebar.checkbox("Enable Web Search", value=False)
 
     # Upload file logic
     uploaded_files = st.sidebar.file_uploader(
