@@ -136,11 +136,15 @@ def load_embed(folder, vdbdir, embed_llm, similarity="cosine", c_size=1000, c_ov
         if filename.endswith('.pdf'):
             pdf_path = os.path.join(directory, filename)
             text = extract_text_from_pdf(pdf_path)
-            documents.append(Document(page_content=text, metadata={'source': filename}))
+            documents.append(Document(page_content=text, metadata={'source': filename, 'path': pdf_path}))
         else:
             loader = DirectoryLoader(directory, exclude="**/*.pdf")
             loaded = loader.load()
             if loaded:
+                # Add full path to metadata
+                for doc in loaded:
+                    if 'source' in doc.metadata:
+                        doc.metadata['path'] = os.path.join(directory, doc.metadata['source'])
                 documents.extend(loaded)
     
     docslen = len(documents)
@@ -164,6 +168,7 @@ def load_embed(folder, vdbdir, embed_llm, similarity="cosine", c_size=1000, c_ov
         for chunk in doc_chunks:
             chunk.metadata['source'] = document.metadata['source']
             chunk.metadata['page'] = document.metadata.get('page', 0)  # Assuming page metadata is available
+            chunk.metadata['path'] = document.metadata.get('path', '')
         chunks.extend(doc_chunks)
 
     # Calculate human-readable chunk IDs

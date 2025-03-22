@@ -48,6 +48,8 @@ def generate_response(user_input, enable_web_search, report_structure, max_searc
     with langgraph_status:
         generate_queries_expander = st.expander("Generate Research Queries", expanded=False)
         search_queries_expander = st.expander("Search Queries", expanded=True)
+        filter_summaries_expander = st.expander("Filter Summaries", expanded=False)
+        rank_summaries_expander = st.expander("Rank Summaries", expanded=False)
         final_answer_expander = st.expander("Generate Final Answer", expanded=False)
 
         steps = []
@@ -65,10 +67,48 @@ def generate_response(user_input, enable_web_search, report_structure, max_searc
                     with search_queries_expander:
                         with st.expander(expander_label, expanded=False):
                             st.write(value)
+                            
+                elif key == "filter_search_summaries":
+                    with filter_summaries_expander:
+                        # Display basic filtering information
+                        filtered_count = len(value.get('filtered_summaries', []))
+                        total_count = len(value.get('filtering_details', []))
+                        st.write(f"Filtered {total_count} summaries down to {filtered_count} based on relevance to the original query")
+                        
+                        # Display detailed filtering information
+                        if 'filtering_details' in value and value['filtering_details']:
+                            st.write("### Filtering Details")
+                            for detail in value['filtering_details']:
+                                # Create an icon based on relevance
+                                icon = "✅" if detail['is_relevant'] else "❌"
+                                # Add a special icon if it was included anyway
+                                if not detail['is_relevant'] and detail.get('included_anyway', False):
+                                    icon = "⚠️"
+                                
+                                # Create an expander for each summary's evaluation
+                                with st.expander(f"{icon} Summary {detail['summary_index']} (Confidence: {detail['confidence']:.2f})", expanded=False):
+                                    st.write(f"**Preview:** {detail['summary_preview']}")
+                                    st.write(f"**Justification:** {detail['justification']}")
+                                    
+                                    # If it was included despite being irrelevant, explain why
+                                    if not detail['is_relevant'] and detail.get('included_anyway', False):
+                                        st.write("**Note:** This summary was included despite being marked as irrelevant because all summaries were filtered out and this one had the highest confidence score.")
+
+                elif key == "rank_search_summaries":
+                    with rank_summaries_expander:
+                        # Display ranking information
+                        if 'relevance_scores' in value and 'ranked_summaries' in value:
+                            scores = value['relevance_scores']
+                            summaries = value['ranked_summaries']
+                            if scores and summaries:
+                                st.write("Summaries ranked by relevance:")
+                                for i, (score, summary) in enumerate(zip(scores, summaries)):
+                                    with st.expander(f"Summary {i+1} (Relevance: {score}/10)", expanded=i==0):
+                                        st.write(summary)
 
                 elif key == "generate_final_answer":
                     with final_answer_expander:
-                        st.write(value)
+                        st.markdown(value, unsafe_allow_html=False)  # Use markdown for rendering links
 
                 steps.append({"step": key, "content": value})
 

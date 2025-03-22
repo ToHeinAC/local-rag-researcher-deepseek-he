@@ -12,6 +12,19 @@ class Evaluation(BaseModel):
 
 class Queries(BaseModel):
     queries: list[str]
+    
+class SummaryRanking(BaseModel):
+    summary_index: int
+    relevance_score: float
+    justification: str
+    
+class SummaryRankings(BaseModel):
+    rankings: list[SummaryRanking]
+
+class SummaryRelevance(BaseModel):
+    is_relevant: bool
+    confidence: float
+    justification: str = "No justification provided"
 
 def parse_output(text):
     # First try to extract thinking part if it exists
@@ -53,22 +66,27 @@ def parse_output(text):
     }
 
 def format_documents_with_metadata(documents):
-    """
-    Convert a list of Documents into a formatted string including metadata.
-
-    Args:
-        documents: List of Document objects
-
-    Returns:
-        String containing document content and metadata
-    """
     formatted_docs = []
     for doc in documents:
         source = doc.metadata.get('source', 'Unknown source')
-        # Make source more prominent for easier reference
-        formatted_doc = f"SOURCE: [{source}]\n\nContent: {doc.page_content}"
+        # Ensure we have an absolute path to the document in the files directory
+        doc_path = ''
+        if 'path' in doc.metadata and os.path.isfile(doc.metadata['path']):
+            doc_path = doc.metadata['path']
+        elif 'source' in doc.metadata:
+            # Try to construct an absolute path to the file in the files directory
+            potential_path = os.path.abspath(os.path.join(os.getcwd(), 'files', source))
+            if os.path.isfile(potential_path):
+                doc_path = potential_path
+        
+        # Format with markdown link if we have a path
+        if doc_path:
+            source_link = f"[{source}]({doc_path})"
+        else:
+            source_link = source
+            
+        formatted_doc = f"SOURCE: {source_link}\n\nContent: {doc.page_content}"
         formatted_docs.append(formatted_doc)
-
     return "\n\n---\n\n".join(formatted_docs)
 
 def get_configured_llm_model(default_model='deepseek-r1:latest'):

@@ -47,11 +47,29 @@ Documents:
 
 Your task is to create a comprehensive summary that addresses the query based on the provided documents. 
 
-IMPORTANT: When referencing information from specific documents, include the source document name in your summary (e.g., 'According to [document_name]...'). This helps track where information comes from.
+IMPORTANT: When referencing information from specific documents, include the source document name and link in your summary using markdown format. For example: 'According to [document_name](document_link)...' or if there's no link available, just use the source name. This helps track where information comes from.
 
 You may use <think>...</think> tags to reason through your process, but this will be removed from the final output.
 
 Provide a well-structured, informative summary that directly addresses the query.
+
+KEY OBJECTIVES:
+1. Extract and synthesize critical findings from each source and mention specific paragraphs, sections etc.
+2. Return relevant passages with literally citing the retrieved information if possible
+3. Present key data points and metrics that support main conclusions
+4. Identify emerging patterns and significant insights
+5. Structure information in a clear, logical flow
+6. Focus ONLY on information directly relevant to the query
+7. Clearly indicate when information is incomplete or uncertain
+
+REQUIREMENTS:
+- Begin immediately with key findings - no introductions
+- Focus on verifiable data and empirical evidence
+- Keep the summary brief, avoid repetition and unnecessary details
+- Prioritize information directly relevant to the query
+- If the documents don't contain sufficient information to address the query, clearly state this
+- Always use markdown format for document links: [document_name](document_link)
+- NEVER reference summary numbers, ALWAYS cite the original document directly
 """
 
 
@@ -67,8 +85,25 @@ Information from research:
 
 Your task is to create a comprehensive report that addresses the user's instruction based on the provided information. 
 
-IMPORTANT: When referencing information from specific documents, include the source document name in your answer (e.g., 'According to [document_name]...'). This helps the user understand where the information comes from.
+IMPORTANT: When referencing information from specific documents, include the source document name and link in your report using markdown format. For example: 'According to [document_name](document_link)...' or if there's no link available, just use the source name. This helps the user understand where the information comes from.
 
 You may use <think>...</think> tags to reason through your process, but this will be removed from the final output.
 
-Provide a well-structured, informative report that directly addresses the user's needs."""
+Provide a well-structured, informative report that directly addresses the user's needs.
+
+# **CRITICAL GUIDELINES:**
+1. Adhere strictly to the structure specified in the user's instruction.
+2. Start IMMEDIATELY with the summary content - no introductions or meta-commentary
+3. Focus ONLY on factual, objective information; if no facts are available, reply saying that the query cannot be answered from the sources given
+4. Extract and synthesize critical findings from each source and mention specific paragraphs, sections etc.
+5. Return relevant passages with literally citing the retrieved information if possible
+6. Present key data points and metrics that support main conclusions
+7. Avoid redundancy, repetition, or unnecessary commentary.
+8. Focus ONLY on information directly relevant to the user's instruction
+9. If summaries contain contradictory information, prioritize information from the higher-relevance summaries
+10. When referencing information, ALWAYS cite the original document directly with its link: 'According to [document_name](document_link)...'
+11. If the summaries don't contain sufficient information to address the instruction, clearly state what aspects couldn't be addressed
+12. Maintain a logical flow of information, even if the input summaries are disconnected
+13. Always use markdown format for document links: [document_name](document_link)
+14. NEVER reference summary numbers, ALWAYS cite the original document directly
+"""

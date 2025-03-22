@@ -1,11 +1,14 @@
 import operator
-from typing import Annotated
+from typing import Annotated, List, Dict, Any, Optional
 from typing_extensions import TypedDict
 
 class ResearcherState(TypedDict):
     user_instructions: str
     research_queries: list[str]
     search_summaries: Annotated[list, operator.add]
+    filtered_summaries: Annotated[list, operator.add]
+    ranked_summaries: list
+    relevance_scores: list
     current_position: int
     final_answer: str
 
@@ -28,3 +31,8 @@ class QuerySearchStateInput(TypedDict):
 class QuerySearchStateOutput(TypedDict):
     query: str
     search_summaries: list[str]
+
+class SummaryRanking(TypedDict):
+    summary_index: int
+    relevance_score: float
+    justification: str
