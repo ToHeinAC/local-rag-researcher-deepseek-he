@@ -140,7 +140,7 @@ def generate_langgraph_visualization():
         # If visualization fails, return the error
         raise Exception(f"Error generating visualization: {str(e)}")
 
-def generate_response(user_input, enable_web_search, report_structure, max_search_queries, llm_model):
+def generate_response(user_input, enable_web_search, report_structure, max_search_queries, llm_model, enable_quality_checker):
     """
     Generate response using the researcher agent and stream steps
     """
@@ -158,6 +158,7 @@ def generate_response(user_input, enable_web_search, report_structure, max_searc
         "report_structure": report_structure,
         "max_search_queries": max_search_queries,
         "llm_model": llm_model,
+        "enable_quality_checker": enable_quality_checker,
     }}
 
     # Start timing the workflow
@@ -319,6 +320,8 @@ def main():
         st.session_state.llm_model = "deepseek-r1:latest"  # Default LLM model
     if "enable_web_search" not in st.session_state:
         st.session_state.enable_web_search = False  # Default web search setting
+    if "enable_quality_checker" not in st.session_state:
+        st.session_state.enable_quality_checker = True  # Default quality checker setting
     if "workflow_start_time" not in st.session_state:
         st.session_state.workflow_start_time = None  # For tracking workflow elapsed time
 
@@ -357,6 +360,9 @@ def main():
     
     # Enable web search checkbox
     st.session_state.enable_web_search = st.sidebar.checkbox("Enable Web Search", value=st.session_state.enable_web_search)
+    
+    # Enable quality checker checkbox
+    st.session_state.enable_quality_checker = st.sidebar.checkbox("Enable Quality Checker", value=st.session_state.enable_quality_checker)
 
     # Clear chat button in a single column
     if st.button("Clear Chat", use_container_width=True):
@@ -416,7 +422,8 @@ def main():
             st.session_state.enable_web_search, 
             report_structure,
             st.session_state.max_search_queries,
-            st.session_state.llm_model
+            st.session_state.llm_model,
+            st.session_state.enable_quality_checker
         )
 
         # Store assistant message

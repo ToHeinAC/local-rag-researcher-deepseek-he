@@ -6,8 +6,8 @@ from langchain_core.runnables.config import RunnableConfig
 from src.assistant.configuration import Configuration
 from src.assistant.vector_db import get_or_create_vector_db, search_documents
 from src.assistant.state import ResearcherState, ResearcherStateInput, ResearcherStateOutput, QuerySearchState, QuerySearchStateInput, QuerySearchStateOutput, SummaryRanking
-from src.assistant.prompts import RESEARCH_QUERY_WRITER_PROMPT, RELEVANCE_EVALUATOR_PROMPT, SUMMARIZER_PROMPT, REPORT_WRITER_PROMPT
-from src.assistant.utils import format_documents_with_metadata, invoke_llm, invoke_ollama, parse_output, tavily_search, Evaluation, Queries, SummaryRankings, SummaryRelevance
+from src.assistant.prompts import RESEARCH_QUERY_WRITER_PROMPT, RELEVANCE_EVALUATOR_PROMPT, SUMMARIZER_PROMPT, REPORT_WRITER_PROMPT, QUALITY_CHECKER_PROMPT
+from src.assistant.utils import format_documents_with_metadata, invoke_llm, invoke_ollama, parse_output, tavily_search, Evaluation, Queries, SummaryRankings, SummaryRelevance, QualityCheckResult
 import re
 
 # Number of query to process in parallel for each batch
@@ -187,7 +187,198 @@ def summarize_query_research(state: QuerySearchState, config: RunnableConfig):
     #     user_prompt=f"Generate a research summary for this query: {query}"
     # )
 
-    return {"search_summaries": [summary]}
+    return {
+        "search_summaries": [summary],
+        "summary_improvement_iterations": 0  # Initialize the iteration counter
+    }
+
+def route_after_summarization(state: QuerySearchState, config: RunnableConfig) -> Literal["quality_check_summary", "__end__"]:
+    """Route based on whether quality checking is enabled."""
+    enable_quality_checker = config["configurable"].get("enable_quality_checker", True)
+    
+    if enable_quality_checker:
+        print("Quality checker is enabled, proceeding to quality check")
+        return "quality_check_summary"
+    else:
+        print("Quality checker is disabled, skipping quality check")
+        return "__end__"
+
+def quality_check_summary(state: QuerySearchState, config: RunnableConfig):
+    """Check the quality of the summary with respect to source documents."""
+    print("--- Checking summary quality ---")
+    query = state["query"]
+    llm_model = config["configurable"].get("llm_model", "deepseek-r1:latest")
+    summary = state["search_summaries"][0]  # Get the latest summary
+    
+    # Get the source documents
+    information = None
+    if state["are_documents_relevant"]:
+        information = state["retrieved_documents"]
+    else:
+        information = state["web_search_results"]
+    
+    # Format documents with metadata to include sources and document links
+    formatted_information = format_documents_with_metadata(information) if state["are_documents_relevant"] else information
+    
+    # Prepare the quality checker prompt
+    quality_prompt = QUALITY_CHECKER_PROMPT.format(
+        summary=summary,
+        documents=formatted_information
+    )
+    
+    try:
+        # First try using the structured output format
+        quality_check = invoke_ollama(
+            model=llm_model,
+            system_prompt=quality_prompt,
+            user_prompt=f"Evaluate the quality of this summary for the query: {query}",
+            output_format=QualityCheckResult
+        )
+        
+        # Convert to dictionary
+        quality_results = quality_check.model_dump()
+        print(f"Quality check results: {quality_results}")
+        
+    except Exception as e:
+        print(f"Error in structured quality check: {str(e)}")
+        try:
+            # Fallback: Try to get raw response and parse it manually
+            raw_response = invoke_ollama(
+                model=llm_model,
+                system_prompt=quality_prompt,
+                user_prompt=f"Evaluate the quality of this summary for the query: {query}"
+            )
+            
+            print(f"Raw response: {raw_response}")
+            
+            # Try to parse JSON from the response
+            import json
+            import re
+            
+            # Clean the response - remove any non-JSON text
+            json_match = re.search(r'\{.*\}', raw_response, re.DOTALL)
+            if json_match:
+                json_str = json_match.group(0)
+                quality_results = json.loads(json_str)
+                print(f"Manually parsed quality results: {quality_results}")
+            else:
+                raise ValueError("Could not find JSON in response")
+                
+        except Exception as e2:
+            print(f"Error in manual JSON parsing: {str(e2)}")
+            # Provide default values if all parsing attempts fail
+            quality_results = {
+                "quality_score": 0.7,  # Moderate quality score
+                "is_accurate": True,
+                "is_complete": False,
+                "issues_found": ["Quality check failed, using default values"],
+                "missing_elements": [],
+                "improvement_needed": True,
+                "improvement_suggestions": "Please improve the summary to ensure it accurately represents the source documents."
+            }
+    
+    return {"quality_check_results": quality_results}
+
+def route_quality_check(state: QuerySearchState) -> Literal["improve_summary", "__end__"]:
+    """Route based on quality check results."""
+    quality_results = state["quality_check_results"]
+    iterations = state.get("summary_improvement_iterations", 0)
+    max_iterations = 2  # Maximum number of improvement attempts
+    
+    # Safely access quality_results with default values if keys are missing
+    improvement_needed = quality_results.get("improvement_needed", False)
+    quality_score = quality_results.get("quality_score", 0.0)
+    
+    # Check if improvement is needed and we haven't exceeded max iterations
+    if improvement_needed and iterations < max_iterations:
+        print(f"Summary needs improvement (iteration {iterations+1}). Quality score: {quality_score}")
+        return "improve_summary"
+    else:
+        if improvement_needed:
+            print(f"Max iterations reached ({iterations}). Proceeding with current summary. Quality score: {quality_score}")
+        else:
+            print(f"Summary quality is good. Quality score: {quality_score}")
+        return "__end__"
+
+def improve_summary(state: QuerySearchState, config: RunnableConfig):
+    """Improve the summary based on quality check feedback."""
+    print("--- Improving summary ---")
+    query = state["query"]
+    llm_model = config["configurable"].get("llm_model", "deepseek-r1:latest")
+    current_summary = state["search_summaries"][0]
+    quality_results = state["quality_check_results"]
+    
+    # Get the source documents
+    information = None
+    if state["are_documents_relevant"]:
+        information = state["retrieved_documents"]
+    else:
+        information = state["web_search_results"]
+    
+    # Format documents with metadata to include sources and document links
+    formatted_information = format_documents_with_metadata(information) if state["are_documents_relevant"] else information
+    
+    # Safely access quality_results with default values if keys are missing
+    quality_score = quality_results.get("quality_score", 0.7)
+    is_accurate = quality_results.get("is_accurate", False)
+    is_complete = quality_results.get("is_complete", False)
+    issues_found = quality_results.get("issues_found", ["Summary needs improvement"])
+    missing_elements = quality_results.get("missing_elements", [])
+    improvement_suggestions = quality_results.get("improvement_suggestions", "Improve accuracy and completeness")
+    
+    # Format issues and missing elements for display
+    issues_str = ", ".join(issues_found) if issues_found else "None"
+    missing_str = ", ".join(missing_elements) if missing_elements else "None"
+    
+    # Create an improvement prompt that includes the quality feedback
+    improvement_prompt = f"""You are a research assistant tasked with improving a summary based on quality feedback.
+
+Original Query: {query}
+
+Current Summary:
+{current_summary}
+
+Source Documents:
+{formatted_information}
+
+Quality Feedback:
+- Quality Score: {quality_score}
+- Accuracy: {'Good' if is_accurate else 'Needs improvement'}
+- Completeness: {'Good' if is_complete else 'Needs improvement'}
+- Issues Found: {issues_str}
+- Missing Elements: {missing_str}
+- Improvement Suggestions: {improvement_suggestions}
+
+Your task is to create an improved summary that addresses the quality feedback while maintaining accuracy and relevance to the query.
+
+KEY OBJECTIVES:
+1. Address all identified issues and missing elements
+2. Ensure all figures, data, and section mentions are accurately represented
+3. Maintain proper source attribution using markdown links
+4. Keep the summary concise and focused on the query
+"""
+    
+    try:
+        # Generate improved summary
+        improved_summary = invoke_ollama(
+            model=llm_model,
+            system_prompt=improvement_prompt,
+            user_prompt=f"Generate an improved research summary for this query: {query}"
+        )
+        # Remove thinking part (reasoning between <think> tags)
+        improved_summary = parse_output(improved_summary)["response"]
+    except Exception as e:
+        print(f"Error generating improved summary: {str(e)}")
+        # If there's an error, make minor improvements to the original summary
+        improved_summary = current_summary + "\n\n[Note: This summary has been reviewed for quality. Please pay attention to the accuracy of figures, data, and section references.]"
+    
+    # Increment the iteration counter
+    iterations = state.get("summary_improvement_iterations", 0) + 1
+    
+    return {
+        "search_summaries": [improved_summary],
+        "summary_improvement_iterations": iterations
+    }
 
 def filter_search_summaries(state: ResearcherState, config: RunnableConfig):
     """Filter out irrelevant search summaries"""
@@ -369,13 +560,17 @@ query_search_subgraph.add_node(retrieve_rag_documents)
 query_search_subgraph.add_node(evaluate_retrieved_documents)
 query_search_subgraph.add_node(web_research)
 query_search_subgraph.add_node(summarize_query_research)
+query_search_subgraph.add_node(quality_check_summary)
+query_search_subgraph.add_node(improve_summary)
 
 # Set entry point and define transitions for the subgraph
 query_search_subgraph.add_edge(START, "retrieve_rag_documents")
 query_search_subgraph.add_edge("retrieve_rag_documents", "evaluate_retrieved_documents")
 query_search_subgraph.add_conditional_edges("evaluate_retrieved_documents", route_research)
 query_search_subgraph.add_edge("web_research", "summarize_query_research")
-query_search_subgraph.add_edge("summarize_query_research", END)
+query_search_subgraph.add_conditional_edges("summarize_query_research", route_after_summarization, ["quality_check_summary", END])
+query_search_subgraph.add_conditional_edges("quality_check_summary", route_quality_check, ["improve_summary", END])
+query_search_subgraph.add_edge("improve_summary", "quality_check_summary")
 
 # Create main research agent graph
 researcher_graph = StateGraph(ResearcherState, input=ResearcherStateInput, output=ResearcherStateOutput, config_schema=Configuration)

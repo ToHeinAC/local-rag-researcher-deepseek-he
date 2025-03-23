@@ -26,6 +26,15 @@ class SummaryRelevance(BaseModel):
     confidence: float
     justification: str = "No justification provided"
 
+class QualityCheckResult(BaseModel):
+    quality_score: float
+    is_accurate: bool
+    is_complete: bool
+    issues_found: list[str]
+    missing_elements: list[str]
+    improvement_needed: bool
+    improvement_suggestions: str
+
 def parse_output(text):
     # First try to extract thinking part if it exists
     think_match = re.search(r'<think>(.*?)</think>', text, re.DOTALL)

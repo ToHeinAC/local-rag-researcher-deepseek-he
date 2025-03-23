@@ -29,6 +29,7 @@ class Configuration:
     report_structure: str = DEFAULT_REPORT_STRUCTURE
     max_search_queries: int = 5
     enable_web_search: bool = False
+    enable_quality_checker: bool = True
     llm_model: str = "deepseek-r1:latest"
 
     @classmethod

@@ -24,6 +24,8 @@ class QuerySearchState(TypedDict):
     retrieved_documents: list
     are_documents_relevant: bool
     search_summaries: list[str]
+    quality_check_results: Optional[Dict[str, Any]]
+    summary_improvement_iterations: int
 
 class QuerySearchStateInput(TypedDict):
     query: str
