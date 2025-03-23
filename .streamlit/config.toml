@@ -5,6 +5,6 @@ enableXsrfProtection = false
 headless = true
 
 [browser]
-serverAddress = "0.0.0.0"
+serverAddress = "127.0.0.1"
 serverPort = 8501
 gatherUsageStats = false

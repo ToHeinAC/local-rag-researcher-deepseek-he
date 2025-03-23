@@ -6,6 +6,8 @@ import torch
 import os
 from PIL import Image
 import io
+import time
+from datetime import datetime, timedelta
 
 # Suppress specific PyTorch warnings
 warnings.filterwarnings("ignore", category=RuntimeWarning)
@@ -158,101 +160,122 @@ def generate_response(user_input, enable_web_search, report_structure, max_searc
         "llm_model": llm_model,
     }}
 
+    # Start timing the workflow
+    start_time = time.time()
+    
     # Create the status for the global "Researcher" process
     langgraph_status = st.status("**Researcher Running...**", state="running")
 
-    # Display the workflow visualization
-    with langgraph_status:
-        st.write("### LangGraph Workflow Visualization")
-        
-        # Display the mermaid diagram
-        st.markdown(f"```mermaid\n{generate_workflow_visualization()}\n```")
-        
-        # Display the actual langgraph visualization
-        st.write("### Actual LangGraph Workflow")
-        try:
-            # Generate the visualization from the actual graph
-            graph_image_path = generate_langgraph_visualization()
+    # Create a placeholder for the elapsed time
+    elapsed_time_placeholder = st.empty()
+    
+    try:
+        # Display the workflow visualization
+        with langgraph_status:
+            st.write("### LangGraph Workflow Visualization")
             
-            # Display the image
-            st.image(graph_image_path, caption="LangGraph Workflow (Generated from graph structure)", use_container_width=True)
-        except Exception as e:
-            st.error(f"Error generating graph visualization: {str(e)}")
-        
-        st.write("---")
-        
-        # Force order of expanders by creating them before iteration
-        generate_queries_expander = st.expander("Generate Research Queries", expanded=False)
-        search_queries_expander = st.expander("Search Queries", expanded=True)
-        filter_summaries_expander = st.expander("Filter Summaries", expanded=False)
-        rank_summaries_expander = st.expander("Rank Summaries", expanded=False)
-        final_answer_expander = st.expander("Generate Final Answer", expanded=False)
+            # Display the mermaid diagram
+            st.markdown(f"```mermaid\n{generate_workflow_visualization()}\n```")
+            
+            # Display the actual langgraph visualization
+            st.write("### Actual LangGraph Workflow")
+            try:
+                # Generate the visualization from the actual graph
+                graph_image_path = generate_langgraph_visualization()
+                
+                # Display the image
+                st.image(graph_image_path, caption="LangGraph Workflow (Generated from graph structure)", use_container_width=True)
+            except Exception as e:
+                st.error(f"Error generating graph visualization: {str(e)}")
+            
+            st.write("---")
+            
+            # Force order of expanders by creating them before iteration
+            generate_queries_expander = st.expander("Generate Research Queries", expanded=False)
+            search_queries_expander = st.expander("Search Queries", expanded=True)
+            filter_summaries_expander = st.expander("Filter Summaries", expanded=False)
+            rank_summaries_expander = st.expander("Rank Summaries", expanded=False)
+            final_answer_expander = st.expander("Generate Final Answer", expanded=False)
 
-        steps = []
+            steps = []
 
-        # Run the researcher graph and stream outputs
-        for output in researcher.stream(initial_state, config=config):
-            for key, value in output.items():
-                expander_label = key.replace("_", " ").title()
+            # Run the researcher graph and stream outputs
+            for output in researcher.stream(initial_state, config=config):
+                # Update elapsed time display directly in the main thread
+                current_time = time.time()
+                elapsed_seconds = current_time - start_time
+                elapsed_time = str(timedelta(seconds=int(elapsed_seconds)))
+                elapsed_time_placeholder.info(f"⏱️ Elapsed time: {elapsed_time}")
+                
+                for key, value in output.items():
+                    expander_label = key.replace("_", " ").title()
 
-                if key == "generate_research_queries":
-                    with generate_queries_expander:
-                        st.write(value)
-
-                elif key.startswith("search_and_summarize_query"):
-                    with search_queries_expander:
-                        with st.expander(expander_label, expanded=False):
+                    if key == "generate_research_queries":
+                        with generate_queries_expander:
                             st.write(value)
-                            
-                elif key == "filter_search_summaries":
-                    with filter_summaries_expander:
-                        # Display basic filtering information
-                        filtered_count = len(value.get('filtered_summaries', []))
-                        total_count = len(value.get('filtering_details', []))
-                        st.write(f"Filtered {total_count} summaries down to {filtered_count} based on relevance to the original query")
-                        
-                        # Display detailed filtering information
-                        if 'filtering_details' in value and value['filtering_details']:
-                            st.write("### Filtering Details")
-                            for detail in value['filtering_details']:
-                                # Create an icon based on relevance
-                                icon = "✅" if detail['is_relevant'] else "❌"
-                                # Add a special icon if it was included anyway
-                                if not detail['is_relevant'] and detail.get('included_anyway', False):
-                                    icon = "⚠️"
+
+                    elif key.startswith("search_and_summarize_query"):
+                        with search_queries_expander:
+                            with st.expander(expander_label, expanded=False):
+                                st.write(value)
                                 
-                                # Create an expander for each summary's evaluation
-                                with st.expander(f"{icon} Summary {detail['summary_index']} (Confidence: {detail['confidence']:.2f})", expanded=False):
-                                    st.write(f"**Preview:** {detail['summary_preview']}")
-                                    st.write(f"**Justification:** {detail['justification']}")
-                                    
-                                    # If it was included despite being irrelevant, explain why
+                    elif key == "filter_search_summaries":
+                        with filter_summaries_expander:
+                            # Display basic filtering information
+                            filtered_count = len(value.get('filtered_summaries', []))
+                            total_count = len(value.get('filtering_details', []))
+                            st.write(f"Filtered {total_count} summaries down to {filtered_count} based on relevance to the original query")
+                            
+                            # Display detailed filtering information
+                            if 'filtering_details' in value and value['filtering_details']:
+                                st.write("### Filtering Details")
+                                for detail in value['filtering_details']:
+                                    # Create an icon based on relevance
+                                    icon = "✔️" if detail['is_relevant'] else "❌"
+                                    # Add a special icon if it was included anyway
                                     if not detail['is_relevant'] and detail.get('included_anyway', False):
-                                        st.write("**Note:** This summary was included despite being marked as irrelevant because all summaries were filtered out and this one had the highest confidence score.")
+                                        icon = "⚠️"
+                                    
+                                    # Create an expander for each summary's evaluation
+                                    with st.expander(f"{icon} Summary {detail['summary_index']} (Confidence: {detail['confidence']:.2f})", expanded=False):
+                                        st.write(f"**Preview:** {detail['summary_preview']}")
+                                        st.write(f"**Justification:** {detail['justification']}")
+                                        
+                                        # If it was included despite being irrelevant, explain why
+                                        if not detail['is_relevant'] and detail.get('included_anyway', False):
+                                            st.write("**Note:** This summary was included despite being marked as irrelevant because all summaries were filtered out and this one had the highest confidence score.")
 
-                elif key == "rank_search_summaries":
-                    with rank_summaries_expander:
-                        # Display ranking information
-                        if 'relevance_scores' in value and 'ranked_summaries' in value:
-                            scores = value['relevance_scores']
-                            summaries = value['ranked_summaries']
-                            if scores and summaries:
-                                st.write("Summaries ranked by relevance:")
-                                for i, (score, summary) in enumerate(zip(scores, summaries)):
-                                    with st.expander(f"Summary {i+1} (Relevance: {score}/10)", expanded=i==0):
-                                        st.write(summary)
+                    elif key == "rank_search_summaries":
+                        with rank_summaries_expander:
+                            # Display ranking information
+                            if 'relevance_scores' in value and 'ranked_summaries' in value:
+                                scores = value['relevance_scores']
+                                summaries = value['ranked_summaries']
+                                if scores and summaries:
+                                    st.write("Summaries ranked by relevance:")
+                                    for i, (score, summary) in enumerate(zip(scores, summaries)):
+                                        with st.expander(f"Summary {i+1} (Relevance: {score}/10)", expanded=i==0):
+                                            st.write(summary)
 
-                elif key == "generate_final_answer":
-                    with final_answer_expander:
-                        st.markdown(value, unsafe_allow_html=False)  # Use markdown for rendering links
+                    elif key == "generate_final_answer":
+                        with final_answer_expander:
+                            st.markdown(value, unsafe_allow_html=False)  # Use markdown for rendering links
 
-                steps.append({"step": key, "content": value})
-
-    # Update status to complete
-    langgraph_status.update(state="complete", label="**Using Langgraph** (Research completed)")
-
-    # Return the final report
-    return steps[-1]["content"] if steps else "No response generated"
+                    steps.append({"step": key, "content": value})
+        
+        # Update status to complete
+        langgraph_status.update(state="complete", label="**Using Langgraph** (Research completed)")
+        
+        # Return the final report
+        return steps[-1]["content"] if steps else "No response generated"
+    
+    finally:
+        # Final update of elapsed time
+        if 'start_time' in locals():
+            current_time = time.time()
+            elapsed_seconds = current_time - start_time
+            elapsed_time = str(timedelta(seconds=int(elapsed_seconds)))
+            elapsed_time_placeholder.info(f"⏱️ Total elapsed time: {elapsed_time}")
 
 def clear_chat():
     st.session_state.messages = []
@@ -296,6 +319,8 @@ def main():
         st.session_state.llm_model = "deepseek-r1:latest"  # Default LLM model
     if "enable_web_search" not in st.session_state:
         st.session_state.enable_web_search = False  # Default web search setting
+    if "workflow_start_time" not in st.session_state:
+        st.session_state.workflow_start_time = None  # For tracking workflow elapsed time
 
     # Sidebar configuration
     st.sidebar.title("Research Settings")
@@ -339,7 +364,7 @@ def main():
         st.rerun()
 
     # Instructions dropdown below the clear chat button
-    with st.expander("📋 How to use this app", expanded=False):
+    with st.expander("📝 How to use this app", expanded=False):
         st.markdown("""
         ### How to Use the RAG Deep Researcher
         
@@ -443,6 +468,10 @@ def main():
 
                     status.update(label="Files processed successfully!", state="complete", expanded=False)
                     # st.rerun()
+
+    # Display green checkbox when processing is complete
+    if st.session_state.processing_complete:
+        st.sidebar.success("✔️ Files processed and ready to use")
 
 if __name__ == "__main__":
     main()
