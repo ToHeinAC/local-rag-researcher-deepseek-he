@@ -3,12 +3,15 @@ import streamlit_nested_layout
 import warnings
 import logging
 import torch
+import os
+from PIL import Image
+import io
 
 # Suppress specific PyTorch warnings
 warnings.filterwarnings("ignore", category=RuntimeWarning)
 logging.getLogger("streamlit").setLevel(logging.ERROR)
 
-from src.assistant.graph import researcher
+from src.assistant.graph import researcher, researcher_graph
 from src.assistant.utils import get_report_structures, process_uploaded_files, clear_cuda_memory
 from dotenv import load_dotenv
 
@@ -20,6 +23,120 @@ except (ImportError, Exception):
     PYPERCLIP_AVAILABLE = False
 
 load_dotenv()
+
+def generate_workflow_visualization():
+    """
+    Generate a visualization of the langgraph workflow using mermaid
+    """
+    # Create a mermaid diagram representation of the graph
+    mermaid_code = "graph TD\n"
+    
+    # Add nodes
+    mermaid_code += "  A[Generate Research Queries] --> B[Search Queries]\n"
+    mermaid_code += "  B --> C[Search & Summarize Query]\n"
+    mermaid_code += "  C -->|More Queries| B\n"
+    mermaid_code += "  C -->|No More Queries| D[Filter Search Summaries]\n"
+    mermaid_code += "  D --> E[Rank Search Summaries]\n"
+    mermaid_code += "  E --> F[Generate Final Answer]\n"
+    
+    # Add subgraph for Search & Summarize Query
+    mermaid_code += "  subgraph Search & Summarize Query\n"
+    mermaid_code += "    C1[Retrieve RAG Documents] --> C2[Evaluate Documents]\n"
+    mermaid_code += "    C2 -->|Relevant| C4[Summarize Research]\n"
+    mermaid_code += "    C2 -->|Not Relevant| C3[Web Research]\n"
+    mermaid_code += "    C3 --> C4\n"
+    mermaid_code += "  end\n"
+    
+    return mermaid_code
+
+def generate_langgraph_visualization():
+    """
+    Generate a visualization directly from the langgraph workflow using networkx
+    """
+    try:
+        # For newer versions of langgraph that support direct visualization
+        if hasattr(researcher_graph, 'get_graph'):
+            graph_viz = researcher_graph.get_graph(xray=True)
+            png_data = graph_viz.draw_mermaid_png()
+            
+            # Save the PNG to a temporary file
+            temp_file_path = "langgraph_workflow.png"
+            with open(temp_file_path, "wb") as file:
+                file.write(png_data)
+            
+            return temp_file_path
+        # For older versions, we'll use the internal graph representation
+        else:
+            # Create a NetworkX graph from the langgraph structure
+            import networkx as nx
+            import matplotlib.pyplot as plt
+            
+            G = nx.DiGraph()
+            
+            # Add nodes and edges based on the researcher_graph structure
+            # These are the main nodes in our workflow
+            nodes = [
+                "START", 
+                "generate_research_queries", 
+                "search_queries",
+                "search_and_summarize_query", 
+                "filter_search_summaries", 
+                "rank_search_summaries", 
+                "generate_final_answer",
+                "END"
+            ]
+            
+            # Add edges based on the graph structure defined in graph.py
+            edges = [
+                ("START", "generate_research_queries"),
+                ("generate_research_queries", "search_queries"),
+                ("search_queries", "search_and_summarize_query"),
+                ("search_and_summarize_query", "search_queries"),  # More queries
+                ("search_and_summarize_query", "filter_search_summaries"),  # No more queries
+                ("filter_search_summaries", "rank_search_summaries"),
+                ("rank_search_summaries", "generate_final_answer"),
+                ("generate_final_answer", "END")
+            ]
+            
+            # Add all nodes and edges to the graph
+            G.add_nodes_from(nodes)
+            G.add_edges_from(edges)
+            
+            # Create a figure
+            plt.figure(figsize=(12, 8))
+            
+            # Use a hierarchical layout for a cleaner look
+            pos = nx.spring_layout(G, seed=42)
+            
+            # Draw the graph
+            nx.draw_networkx(
+                G, pos,
+                node_color='lightblue',
+                node_size=2000,
+                font_size=10,
+                font_weight='bold',
+                arrows=True,
+                arrowsize=20,
+                edge_color='gray'
+            )
+            
+            # Add edge labels for conditional transitions
+            edge_labels = {
+                ("search_and_summarize_query", "search_queries"): "More Queries",
+                ("search_and_summarize_query", "filter_search_summaries"): "No More Queries"
+            }
+            nx.draw_networkx_edge_labels(G, pos, edge_labels=edge_labels, font_size=8)
+            
+            # Save the figure to a file
+            temp_file_path = "langgraph_workflow.png"
+            plt.tight_layout()
+            plt.savefig(temp_file_path, dpi=100, bbox_inches='tight')
+            plt.close()
+            
+            return temp_file_path
+    except Exception as e:
+        # If visualization fails, return the error
+        raise Exception(f"Error generating visualization: {str(e)}")
 
 def generate_response(user_input, enable_web_search, report_structure, max_search_queries, llm_model):
     """
@@ -44,8 +161,27 @@ def generate_response(user_input, enable_web_search, report_structure, max_searc
     # Create the status for the global "Researcher" process
     langgraph_status = st.status("**Researcher Running...**", state="running")
 
-    # Force order of expanders by creating them before iteration
+    # Display the workflow visualization
     with langgraph_status:
+        st.write("### LangGraph Workflow Visualization")
+        
+        # Display the mermaid diagram
+        st.markdown(f"```mermaid\n{generate_workflow_visualization()}\n```")
+        
+        # Display the actual langgraph visualization
+        st.write("### Actual LangGraph Workflow")
+        try:
+            # Generate the visualization from the actual graph
+            graph_image_path = generate_langgraph_visualization()
+            
+            # Display the image
+            st.image(graph_image_path, caption="LangGraph Workflow (Generated from graph structure)", use_container_width=True)
+        except Exception as e:
+            st.error(f"Error generating graph visualization: {str(e)}")
+        
+        st.write("---")
+        
+        # Force order of expanders by creating them before iteration
         generate_queries_expander = st.expander("Generate Research Queries", expanded=False)
         search_queries_expander = st.expander("Search Queries", expanded=True)
         filter_summaries_expander = st.expander("Filter Summaries", expanded=False)
@@ -139,7 +275,7 @@ def main():
     # Create header with two columns
     header_col1, header_col2 = st.columns([0.6, 0.4])
     with header_col1:
-        st.title("📄 RAG Deep Researcher")
+        st.title(" RAG Deep Researcher")
     with header_col2:
         st.image("Header für Chatbot.png", use_container_width=True)
 
@@ -271,6 +407,10 @@ def main():
             if PYPERCLIP_AVAILABLE:
                 if st.button("📋", key=f"copy_{len(st.session_state.messages)}"):
                     copy_to_clipboard(assistant_response)
+
+            # Display the image if available
+            if "image_path" in st.session_state and st.session_state.image_path:
+                st.image(st.session_state.image_path, caption="Generated Image", use_container_width=True)
 
     # Upload file logic
     uploaded_files = st.sidebar.file_uploader(

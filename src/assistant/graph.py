@@ -399,3 +399,6 @@ researcher_graph.add_edge("generate_final_answer", END)
 
 # Compile the researcher graph
 researcher = researcher_graph.compile()
+
+# Make sure researcher_graph is exported
+__all__ = ["researcher", "researcher_graph"]

@@ -18,3 +18,5 @@ pdfplumber>=0.10.3
 pyperclip>=1.8.2
 PyMuPDF>=1.23.21
 nltk>=3.8.1
+networkx>=3.0
+matplotlib>=3.7.0
