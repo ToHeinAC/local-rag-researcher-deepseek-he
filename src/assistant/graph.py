@@ -9,6 +9,7 @@ from src.assistant.state import ResearcherState, ResearcherStateInput, Researche
 from src.assistant.prompts import RESEARCH_QUERY_WRITER_PROMPT, RELEVANCE_EVALUATOR_PROMPT, SUMMARIZER_PROMPT, REPORT_WRITER_PROMPT, QUALITY_CHECKER_PROMPT
 from src.assistant.utils import format_documents_with_metadata, invoke_llm, invoke_ollama, parse_output, tavily_search, Evaluation, Queries, SummaryRankings, SummaryRelevance, QualityCheckResult
 import re
+import time
 
 # Number of query to process in parallel for each batch
 # Change depending on the performance of the system
@@ -42,18 +43,6 @@ def generate_research_queries(state: ResearcherState, config: RunnableConfig):
     # )
 
     return {"research_queries": result.queries}
-
-def search_queries(state: ResearcherState):
-    # Kick off the search for each query by calling initiate_query_research
-    print("--- Searching queries ---")
-    pass
-
-def initiate_query_research(state: ResearcherState):
-    # Kick off the search for each query in parallel using Send method and calling the "search_and_summarize_query" subgraph
-    return [
-        Send("search_and_summarize_query", {"query": s})
-        for s in state["research_queries"]
-    ]
 
 def search_queries(state: ResearcherState):
     # Kick off the search for each query by calling initiate_query_research
@@ -151,6 +140,7 @@ def web_research(state: QuerySearchState):
     return {"web_search_results": formatted_results}
 
 def summarize_query_research(state: QuerySearchState, config: RunnableConfig):
+    print("--- Summarizing query research ---")
     query = state["query"]
     llm_model = config["configurable"].get("llm_model", "deepseek-r1:latest")
 
@@ -163,33 +153,28 @@ def summarize_query_research(state: QuerySearchState, config: RunnableConfig):
         # if enabled, otherwise query will be skipped in the previous router node
         information = state["web_search_results"]
 
-    # Format documents with metadata to include sources and document links
-    formatted_information = format_documents_with_metadata(information) if state["are_documents_relevant"] else information
+    # Format documents with metadata but simplified without emphasis on citations
+    # Preserve original content as much as possible
+    formatted_information = format_documents_with_metadata(information, preserve_original=True) if state["are_documents_relevant"] else information
     
     summary_prompt = SUMMARIZER_PROMPT.format(
         query=query,
         documents=formatted_information
     )
     
-    # Using local Deepseek R1 model with Ollama
+    # Using local model with Ollama
     summary = invoke_ollama(
         model=llm_model,
         system_prompt=summary_prompt,
-        user_prompt=f"Generate a research summary for this query: {query}"
+        user_prompt=f"Extract and include relevant information from the documents that answers this query, preserving original wording: {query}"
     )
-    # Remove thinking part (reasoning between <think> tags)
+    # Remove thinking part if present
     summary = parse_output(summary)["response"]
-    
-    # Using external LLM providers with OpenRouter: GPT-4o, Claude, Deepseek R1,... 
-    # summary = invoke_llm(
-    #     model='gpt-4o-mini',
-    #     system_prompt=summary_prompt,
-    #     user_prompt=f"Generate a research summary for this query: {query}"
-    # )
 
     return {
         "search_summaries": [summary],
-        "summary_improvement_iterations": 0  # Initialize the iteration counter
+        "summary_improvement_iterations": 0,  # Initialize the iteration counter
+        "original_summary": summary  # Store the original summary for reference
     }
 
 def route_after_summarization(state: QuerySearchState, config: RunnableConfig) -> Literal["quality_check_summary", "__end__"]:
@@ -204,11 +189,12 @@ def route_after_summarization(state: QuerySearchState, config: RunnableConfig) -
         return "__end__"
 
 def quality_check_summary(state: QuerySearchState, config: RunnableConfig):
-    """Check the quality of the summary with respect to source documents."""
-    print("--- Checking summary quality ---")
+    """Simple quality check to ensure the summary contains sufficient information."""
+    print("--- Quality checking summary ---")
     query = state["query"]
+    current_summary = state["search_summaries"][0]
     llm_model = config["configurable"].get("llm_model", "deepseek-r1:latest")
-    summary = state["search_summaries"][0]  # Get the latest summary
+    quality_check_loops = config["configurable"].get("quality_check_loops", 1)  # Get configured loop count
     
     # Get the source documents
     information = None
@@ -217,93 +203,85 @@ def quality_check_summary(state: QuerySearchState, config: RunnableConfig):
     else:
         information = state["web_search_results"]
     
-    # Format documents with metadata to include sources and document links
+    # Format documents with metadata
     formatted_information = format_documents_with_metadata(information) if state["are_documents_relevant"] else information
     
-    # Prepare the quality checker prompt
     quality_prompt = QUALITY_CHECKER_PROMPT.format(
-        summary=summary,
+        summary=current_summary,
         documents=formatted_information
     )
     
     try:
-        # First try using the structured output format
-        quality_check = invoke_ollama(
-            model=llm_model,
-            system_prompt=quality_prompt,
-            user_prompt=f"Evaluate the quality of this summary for the query: {query}",
-            output_format=QualityCheckResult
-        )
+        # Initialize quality check results
+        quality_check = None
         
-        # Convert to dictionary
-        quality_results = quality_check.model_dump()
-        print(f"Quality check results: {quality_results}")
-        
-    except Exception as e:
-        print(f"Error in structured quality check: {str(e)}")
-        try:
-            # Fallback: Try to get raw response and parse it manually
-            raw_response = invoke_ollama(
+        # Perform quality checks in a loop based on configured count
+        for i in range(quality_check_loops):
+            print(f"Quality check iteration {i+1}/{quality_check_loops}")
+            
+            # Using local model with Ollama
+            quality_check = invoke_ollama(
                 model=llm_model,
                 system_prompt=quality_prompt,
-                user_prompt=f"Evaluate the quality of this summary for the query: {query}"
+                user_prompt=f"Evaluate if this summary contains sufficient information to answer the query: {query}",
+                output_format=QualityCheckResult
             )
             
-            print(f"Raw response: {raw_response}")
+            # Log quality results
+            quality_score = quality_check.quality_score
+            is_sufficient = quality_check.is_sufficient
+            improvement_needed = quality_check.improvement_needed
             
-            # Try to parse JSON from the response
-            import json
-            import re
+            print(f"Summary quality score: {quality_score}")
+            print(f"Is summary sufficient: {is_sufficient}")
+            print(f"Improvement needed: {improvement_needed}")
             
-            # Clean the response - remove any non-JSON text
-            json_match = re.search(r'\{.*\}', raw_response, re.DOTALL)
-            if json_match:
-                json_str = json_match.group(0)
-                quality_results = json.loads(json_str)
-                print(f"Manually parsed quality results: {quality_results}")
-            else:
-                raise ValueError("Could not find JSON in response")
-                
-        except Exception as e2:
-            print(f"Error in manual JSON parsing: {str(e2)}")
-            # Provide default values if all parsing attempts fail
-            quality_results = {
-                "quality_score": 0.7,  # Moderate quality score
-                "is_accurate": True,
-                "is_complete": False,
-                "issues_found": ["Quality check failed, using default values"],
-                "missing_elements": [],
-                "citation_issues": [],
-                "improvement_needed": True,
-                "improvement_suggestions": "Please improve the summary to ensure it accurately represents the source documents."
-            }
-    
-    return {"quality_check_results": quality_results}
+            # If the quality is good enough, break the loop
+            if is_sufficient and not improvement_needed:
+                print(f"Quality check passed on iteration {i+1}, breaking loop")
+                break
+            
+            # If this is not the last iteration and improvement is needed, wait briefly
+            if i < quality_check_loops - 1 and improvement_needed:
+                print("Waiting before next quality check iteration...")
+                time.sleep(1)  # Brief pause between iterations
+        
+        return {"quality_check_results": quality_check.dict()}
+        
+    except Exception as e:
+        print(f"Error during quality check: {str(e)}")
+        # Default quality check results in case of error
+        default_results = {
+            "quality_score": 0.7,  # Medium quality score
+            "is_sufficient": True,  # Assume sufficient to continue
+            "improvement_needed": False,  # Don't force improvement to avoid loops
+            "improvement_suggestions": "No specific suggestions due to error in quality check."
+        }
+        return {"quality_check_results": default_results}
 
 def route_quality_check(state: QuerySearchState) -> Literal["improve_summary", "__end__"]:
     """Route based on quality check results."""
-    quality_results = state["quality_check_results"]
-    iterations = state.get("summary_improvement_iterations", 0)
-    max_iterations = 2  # Maximum number of improvement attempts
+    quality_results = state.get("quality_check_results", {})
     
-    # Safely access quality_results with default values if keys are missing
+    # Check if improvement is needed based on the simplified quality metrics
     improvement_needed = quality_results.get("improvement_needed", False)
-    quality_score = quality_results.get("quality_score", 0.0)
+    quality_score = quality_results.get("quality_score", 0.7)
+    is_sufficient = quality_results.get("is_sufficient", True)
     
-    # Check if improvement is needed and we haven't exceeded max iterations
-    if improvement_needed and iterations < max_iterations:
-        print(f"Summary needs improvement (iteration {iterations+1}). Quality score: {quality_score}")
+    # Get current improvement iteration
+    iterations = state.get("summary_improvement_iterations", 0)
+    
+    # Only improve the summary once, regardless of quality metrics
+    if iterations == 0:
+        print(f"Proceeding with summary improvement using quality feedback. Quality score: {quality_score}, Sufficient: {is_sufficient}")
         return "improve_summary"
     else:
-        if improvement_needed:
-            print(f"Max iterations reached ({iterations}). Proceeding with current summary. Quality score: {quality_score}")
-        else:
-            print(f"Summary quality is good. Quality score: {quality_score}")
+        print(f"Summary has already been improved once, proceeding with current version. Quality score: {quality_score}, Sufficient: {is_sufficient}")
         return "__end__"
 
 def improve_summary(state: QuerySearchState, config: RunnableConfig):
     """Improve the summary based on quality check feedback."""
-    print("--- Improving summary ---")
+    print("--- Improving summary with quality feedback ---")
     query = state["query"]
     llm_model = config["configurable"].get("llm_model", "deepseek-r1:latest")
     current_summary = state["search_summaries"][0]
@@ -316,25 +294,16 @@ def improve_summary(state: QuerySearchState, config: RunnableConfig):
     else:
         information = state["web_search_results"]
     
-    # Format documents with metadata to include sources and document links
+    # Format documents with metadata but simplified
     formatted_information = format_documents_with_metadata(information) if state["are_documents_relevant"] else information
     
-    # Safely access quality_results with default values if keys are missing
+    # Extract quality feedback
     quality_score = quality_results.get("quality_score", 0.7)
-    is_accurate = quality_results.get("is_accurate", False)
-    is_complete = quality_results.get("is_complete", False)
-    issues_found = quality_results.get("issues_found", ["Summary needs improvement"])
-    missing_elements = quality_results.get("missing_elements", [])
-    citation_issues = quality_results.get("citation_issues", [])
-    improvement_suggestions = quality_results.get("improvement_suggestions", "Improve accuracy and completeness")
+    is_sufficient = quality_results.get("is_sufficient", False)
+    improvement_suggestions = quality_results.get("improvement_suggestions", "")
     
-    # Format issues and missing elements for display
-    issues_str = ", ".join(issues_found) if issues_found else "None"
-    missing_str = ", ".join(missing_elements) if missing_elements else "None"
-    citation_issues_str = ", ".join(citation_issues) if citation_issues else "None"
-    
-    # Create an improvement prompt that includes the quality feedback
-    improvement_prompt = f"""You are a research assistant tasked with improving a summary based on quality feedback.
+    # Create an improved prompt that explicitly incorporates quality feedback
+    improvement_prompt = f"""Improve this summary by addressing the specific quality feedback provided.
 
 Original Query: {query}
 
@@ -346,86 +315,66 @@ Source Documents:
 
 Quality Feedback:
 - Quality Score: {quality_score}
-- Accuracy: {'Good' if is_accurate else 'Needs improvement'}
-- Completeness: {'Good' if is_complete else 'Needs improvement'}
-- Issues Found: {issues_str}
-- Missing Elements: {missing_str}
-- Citation Issues: {citation_issues_str}
+- Is sufficient: {'Yes' if is_sufficient else 'No'}
 - Improvement Suggestions: {improvement_suggestions}
 
-Your task is to create an improved summary that addresses the quality feedback while maintaining accuracy and relevance to the query.
-
-**CRITICAL REQUIREMENT**: All citations MUST use the exact markdown format: '[local_document_filename](local_document_full_path)'. 
-For example: 'According to [document.pdf](/path/to/document.pdf)...'. 
-The path to the document includes the /files folder in which the actual document is stored after processing.
-Every piece of information from source documents must be properly cited using this format.
-
-KEY OBJECTIVES:
-1. Address all identified issues and missing elements
-2. Fix ALL citation issues by using the exact format: '[local_document_filename](local_document_full_path)'
-3. Ensure all figures, data, and section mentions are accurately represented
-4. Maintain proper source attribution using the required citation format
-5. Keep the summary comprehensive and focused on the query
-6. Ensure that EVERY piece of information from the source documents is properly cited
-7. Use the exact citation format for ALL references: '[document.pdf](/path/to/document.pdf)'
+Your task is to create ONE improved version of the summary that:
+1. Addresses the specific improvement suggestions
+2. Extracts the most relevant information from the source documents
+3. Directly answers the original query
+4. Preserves original wording from the source documents where appropriate
 """
     
     try:
-        # Generate improved summary
+        # Generate improved summary incorporating quality feedback
         improved_summary = invoke_ollama(
             model=llm_model,
             system_prompt=improvement_prompt,
-            user_prompt=f"Generate an improved research summary for this query: {query}. CRITICAL REQUIREMENT: Ensure ALL citations use the exact markdown format '[local_document_filename](local_document_full_path)' with the path including the /files folder."
+            user_prompt=f"Create ONE improved version of this summary based on the quality feedback provided."
         )
-        # Remove thinking part (reasoning between <think> tags)
+        # Remove thinking part if present
         improved_summary = parse_output(improved_summary)["response"]
-        
-        # Check if the improved summary contains proper citations
-        citation_pattern = r'\[([^\]]+)\]\(([^)]+)\)'
-        citations = re.findall(citation_pattern, improved_summary)
-        
-        if not citations and len(improved_summary) > 200:  # Only check substantial summaries
-            print("Warning: Improved summary doesn't contain proper citations. Adding a reminder.")
-            improved_summary += "\n\n**Note: This summary should include proper citations in the format [filename](/path/to/file). Please review and ensure all information is properly cited.**"
             
     except Exception as e:
         print(f"Error generating improved summary: {str(e)}")
-        # If there's an error, make minor improvements to the original summary
-        improved_summary = current_summary + "\n\n[Note: This summary has been reviewed for quality. Please ensure all citations use the format [filename](/path/to/file).]"  
+        # If there's an error, keep the original summary
+        improved_summary = current_summary
     
-    # Increment the iteration counter
-    iterations = state.get("summary_improvement_iterations", 0) + 1
-    
+    # Set iteration counter to 1 to indicate one improvement has been made
     return {
         "search_summaries": [improved_summary],
-        "summary_improvement_iterations": iterations
+        "summary_improvement_iterations": 1
     }
 
 def filter_search_summaries(state: ResearcherState, config: RunnableConfig):
-    """Filter out irrelevant search summaries"""
+    """Filter out irrelevant search summaries with a simpler approach"""
     print("--- Filtering search summaries ---")
     user_instructions = state["user_instructions"]
     search_summaries = state["search_summaries"]
     llm_model = config["configurable"].get("llm_model", "deepseek-r1:latest")
     
-    # For each summary, determine if it's relevant to the original query
-    filtered_summaries = []
-    filtering_details = []
+    # Skip empty or minimal summaries
+    valid_summaries = []
+    for summary in search_summaries:
+        if summary and len(summary.strip()) > 50:
+            valid_summaries.append(summary)
     
-    for i, summary in enumerate(search_summaries):
-        evaluation_prompt = f"""
-        Determine if this summary is relevant to the original query.
+    # If all summaries were excluded, keep at least one with the most content
+    if not valid_summaries and search_summaries:
+        valid_summaries = [max(search_summaries, key=lambda s: len(s.strip()) if s else 0)]
+    
+    # Simple evaluation of relevance with minimal overhead
+    filtered_summaries = []
+    for summary in valid_summaries:
+        evaluation_prompt = f"""Determine if this summary is relevant to the original query.
         
-        Original Query: {user_instructions}
-        
-        Summary {i+1}:
-        {summary}
-        
-        Evaluate the relevance of this summary to the original query.
-        Your output must only be a valid JSON object with keys "is_relevant" (boolean), "confidence" (float 0-1), and "justification" (string explaining your decision).
-        
-        **IMPORTANT**: Even if the summary is not directly relevant to the query, it may still contain valuable information that should be included in the final report. Consider partial relevance as well.
-        """
+Original Query: {user_instructions}
+
+Summary:
+{summary}
+
+Your output must only be a valid JSON object with keys "is_relevant" (boolean) and "confidence" (float 0-1).
+"""
         
         result = invoke_ollama(
             model=llm_model,
@@ -434,203 +383,122 @@ def filter_search_summaries(state: ResearcherState, config: RunnableConfig):
             output_format=SummaryRelevance
         )
         
-        # Store details about this evaluation
-        filtering_details.append({
-            "summary_index": i+1,
-            "is_relevant": result.is_relevant,
-            "confidence": result.confidence,
-            "justification": getattr(result, 'justification', 'No justification provided'),
-            "summary_preview": summary[:200] + "..." if len(summary) > 200 else summary
-        })
-        
         if result.is_relevant:
             filtered_summaries.append(summary)
     
-    # If all summaries were filtered out, keep at least one (the most relevant one)
-    if not filtered_summaries and search_summaries:
-        # Find the summary with highest confidence
-        if filtering_details:
-            most_confident_idx = max(range(len(filtering_details)), 
-                                   key=lambda i: filtering_details[i]["confidence"] if not filtering_details[i]["is_relevant"] else 0)
-            filtered_summaries = [search_summaries[most_confident_idx]]
-            # Mark this summary as included despite being irrelevant
-            filtering_details[most_confident_idx]["included_anyway"] = True
-        else:
-            filtered_summaries = [search_summaries[0]]
+    # If all summaries were filtered out, keep the most relevant one
+    if not filtered_summaries and valid_summaries:
+        filtered_summaries = [valid_summaries[0]]
     
-    # If we have very few filtered summaries, include more to ensure we have enough information
-    # for a meaningful final report, even if they're less relevant
-    min_summaries_for_report = 2  # Minimum number of summaries we want to include
-    if len(filtered_summaries) < min_summaries_for_report and len(search_summaries) > len(filtered_summaries):
-        # Sort remaining summaries by confidence
-        remaining_indices = [i for i in range(len(search_summaries)) if search_summaries[i] not in filtered_summaries]
-        remaining_indices.sort(key=lambda i: filtering_details[i]["confidence"], reverse=True)
-        
-        # Add the highest confidence remaining summaries until we reach min_summaries_for_report
-        for i in remaining_indices:
-            if len(filtered_summaries) >= min_summaries_for_report:
-                break
-            filtered_summaries.append(search_summaries[i])
-            filtering_details[i]["included_for_completeness"] = True
-    
-    # Add a note about the filtering process
-    print(f"Filtered {len(search_summaries)} summaries down to {len(filtered_summaries)} relevant ones")
-    for detail in filtering_details:
-        included = detail["is_relevant"] or detail.get("included_anyway", False) or detail.get("included_for_completeness", False)
-        print(f"Summary {detail['summary_index']}: {'INCLUDED' if included else 'EXCLUDED'} (Relevance: {detail['is_relevant']}, Confidence: {detail['confidence']})")
-        print(f"Justification: {detail['justification']}")
-        print(f"Preview: {detail['summary_preview']}\n")
-    
-    return {"filtered_summaries": filtered_summaries, "filtering_details": filtering_details}
+    return {"filtered_summaries": filtered_summaries}
 
 def rank_search_summaries(state: ResearcherState, config: RunnableConfig):
-    """Rank search summaries by relevance to the original query"""
+    """Simplified ranking of search summaries by relevance"""
     print("--- Ranking search summaries ---")
     user_instructions = state["user_instructions"]
-    
-    # Use filtered summaries if available, otherwise use all summaries
-    summaries = state.get("filtered_summaries", state["search_summaries"])
+    filtered_summaries = state["filtered_summaries"]
     llm_model = config["configurable"].get("llm_model", "deepseek-r1:latest")
     
-    # If there's only one summary, no need to rank
-    if len(summaries) <= 1:
+    # If we have only one summary, no need to rank
+    if len(filtered_summaries) <= 1:
         return {
-            "ranked_summaries": summaries,
-            "relevance_scores": [10] if summaries else []
+            "ranked_summaries": filtered_summaries,
+            "relevance_scores": [1.0] if filtered_summaries else []
         }
     
-    # Create a prompt to rank summaries
-    ranking_prompt = """
-    You are a research assistant tasked with ranking information summaries by relevance to the original query.
+    ranked_results = []
     
-    Original Query: {query}
+    # For each filtered summary, calculate a simple relevance score
+    for i, summary in enumerate(filtered_summaries):
+        ranking_prompt = f"""Rate how relevant this information is to answering the query.
+
+Query: {user_instructions}
+
+Information:
+{summary}
+
+Your output must be a JSON object with keys "relevance_score" (float 0-1) and "justification" (brief explanation).
+"""
+        
+        try:
+            ranking = invoke_ollama(
+                model=llm_model,
+                system_prompt=ranking_prompt,
+                user_prompt="Rate the relevance of this information",
+                output_format=SummaryRanking
+            )
+            
+            ranked_results.append({
+                "summary_index": i,
+                "relevance_score": ranking.relevance_score,
+                "justification": ranking.justification
+            })
+            
+        except Exception as e:
+            print(f"Error ranking summary {i}: {str(e)}")
+            # Assign a default middle score
+            ranked_results.append({
+                "summary_index": i,
+                "relevance_score": 0.5,
+                "justification": "Ranking failed - assigned default score"
+            })
     
-    For each summary, assign a relevance score from 1-10 and provide a brief justification.
-    Your output must be a valid JSON array of objects with 'summary_index', 'relevance_score', and 'justification' keys.
+    # Sort by relevance score, highest first
+    ranked_results.sort(key=lambda x: x["relevance_score"], reverse=True)
     
-    **IMPORTANT**: Even summaries with lower relevance may contain valuable information that should be included in the final report. 
-    Assign scores based on both direct relevance to the query and the general value of the information provided.
-    Remember that we MUST produce a final report based on the available information, even if it's not perfectly aligned with the query.
+    # Prepare the ranked summaries and scores
+    ranked_summaries = [filtered_summaries[result["summary_index"]] for result in ranked_results]
+    relevance_scores = [result["relevance_score"] for result in ranked_results]
     
-    Summaries:
-    {summaries}
-    """
-    
-    formatted_summaries = "\n\n---\n\n".join([f"Summary {i+1}:\n{summary}" for i, summary in enumerate(summaries)])
-    
-    result = invoke_ollama(
-        model=llm_model,
-        system_prompt=ranking_prompt.format(query=user_instructions, summaries=formatted_summaries),
-        user_prompt="Rank these research summaries by relevance to the original query, keeping in mind that we must produce a final report from the available information",
-        output_format=SummaryRankings
-    )
-    
-    # Sort summaries by relevance score
-    ranked_summaries = sorted(result.rankings, key=lambda x: x.relevance_score, reverse=True)
-    
-    # Print ranking details
-    print("Summary rankings:")
-    for rank in ranked_summaries:
-        print(f"Summary {rank.summary_index}: Score {rank.relevance_score}/10 - {rank.justification}")
-    
-    # Ensure we have at least a minimum number of summaries for the final report
-    min_summaries_for_report = min(3, len(summaries))  # At least 3 summaries or all available if less than 3
-    ranked_indices = [r.summary_index-1 for r in ranked_summaries]
-    
-    # If some summaries weren't ranked (shouldn't happen but just in case), add them with a low score
-    unranked_indices = [i for i in range(len(summaries)) if i not in ranked_indices]
-    for i in unranked_indices:
-        ranked_indices.append(i)
-        print(f"Adding unranked Summary {i+1} with default low score")
-    
-    # Return the ranked summaries and their scores
     return {
-        "ranked_summaries": [summaries[i] for i in ranked_indices],
-        "relevance_scores": [r.relevance_score for r in ranked_summaries] + [1] * len(unranked_indices)
+        "ranked_summaries": ranked_summaries,
+        "relevance_scores": relevance_scores
     }
 
 def generate_final_answer(state: ResearcherState, config: RunnableConfig):
+    """Generate the final answer using relevant information from ranked summaries"""
     print("--- Generating final answer ---")
     user_instructions = state["user_instructions"]
-    report_structure = config["configurable"].get("report_structure", "")
+    ranked_summaries = state.get("ranked_summaries", [])
+    relevance_scores = state.get("relevance_scores", [])
     llm_model = config["configurable"].get("llm_model", "deepseek-r1:latest")
     
-    # Get the ranked summaries (top 5 most relevant)
-    ranked_summaries = state.get("ranked_summaries", state.get("filtered_summaries", state["search_summaries"]))
-    top_summaries = ranked_summaries[:5] if len(ranked_summaries) > 5 else ranked_summaries
+    # Get report structure configuration
+    report_structure_file = config["configurable"].get("report_structure_file", "./report_structures/standard report.md")
+    try:
+        with open(report_structure_file, "r") as f:
+            report_structure = f.read()
+    except Exception as e:
+        print(f"Error reading report structure file: {str(e)}")
+        report_structure = "# Report\n\n## Summary\n\n## Key Findings\n\n## Conclusion"
     
-    # Extract document links from the summaries to ensure we cite original documents
-    document_links = []
-    for summary in top_summaries:
-        # Extract all markdown links from the summary using regex
-        links = re.findall(r'\[([^\]]+)\]\(([^)]+)\)', summary)
-        for link_text, link_url in links:
-            document_links.append((link_text, link_url))
+    # Combine all relevant information from ranked summaries
+    combined_information = ""
     
-    # Format the summaries with document links
-    formatted_summaries = []
-    for i, summary in enumerate(top_summaries):
-        relevance_score = state.get('relevance_scores', [0] * len(top_summaries))[i]
-        formatted_summary = f"Summary {i+1}" + (f" (Relevance: {relevance_score:.2f})" if relevance_score else "") + f":\n{summary}"
-        formatted_summaries.append(formatted_summary)
-    
-    # Join the formatted summaries
-    all_summaries = "\n\n---\n\n".join(formatted_summaries)
-    
-    # Add document links information for the report writer
-    document_links_info = "\n\nOriginal Document Links:\n"
-    if document_links:
-        for i, (doc_name, doc_link) in enumerate(document_links):
-            document_links_info += f"- [{doc_name}]({doc_link})\n"
+    if ranked_summaries:
+        # Include all ranked summaries, sorted by relevance
+        for i, (summary, score) in enumerate(zip(ranked_summaries, relevance_scores)):
+            # Only include if it has a reasonable amount of content
+            if summary and len(summary.strip()) > 50:
+                combined_information += f"\n\n--- Information {i+1} (Relevance Score: {score}) ---\n\n{summary}"
     else:
-        document_links_info += "No document links found in the summaries. You MUST cite sources in the format [filename](/path/to/file) when referencing information.\n"
+        combined_information = "No relevant information found."
     
-    all_summaries += document_links_info
-    
-    # Check if we have any meaningful summaries
-    has_meaningful_content = len(top_summaries) > 0 and any(len(summary.strip()) > 50 for summary in top_summaries)
-    
-    # Add a note if there's no meaningful content
-    if not has_meaningful_content:
-        all_summaries += "\n\n**NOTE: The retrieved information appears to be limited or not directly relevant to your query. The report will be generated based on the available information, but may not fully address your specific needs.**"
-    
-    # Add an explicit instruction to always produce a report
-    all_summaries += "\n\n**IMPORTANT INSTRUCTION: You MUST IN ANY CASE produce a final report based on the retrieved information above. If the information is not relevant to the user's query, explicitly state this limitation but still provide the best possible report based on available information.**"
-    
-    # Add specific citation instructions
-    all_summaries += "\n\n**CITATION REQUIREMENT: When referencing any information from the documents, you MUST cite the source using the exact markdown format: [filename](/path/to/file). Every piece of information must be properly cited. The path to the document includes the /files folder in which the actual document is stored after processing.**"
-    
-    # Generate the final answer using the report writer prompt
+    # Generate the final answer
     report_prompt = REPORT_WRITER_PROMPT.format(
         instruction=user_instructions,
         report_structure=report_structure,
-        information=all_summaries
+        information=combined_information
     )
     
-    # Using local Deepseek R1 model with Ollama
     final_answer = invoke_ollama(
         model=llm_model,
         system_prompt=report_prompt,
-        user_prompt=f"Generate a comprehensive report that answers this query: {user_instructions}. CRITICAL REQUIREMENT: You MUST produce a final report based on the retrieved information, even if it's not directly relevant to the query. In that case, clearly state the limitations but still provide a report using the available information. ALWAYS cite sources using the exact format [filename](/path/to/file) when referencing information."
+        user_prompt=f"Create a comprehensive report for: {user_instructions}"
     )
-    # Remove thinking part (reasoning between <think> tags)
+    
+    # Remove thinking part if present
     final_answer = parse_output(final_answer)["response"]
-    
-    # Check if the final answer contains proper citations
-    citation_pattern = r'\[([^\]]+)\]\(([^)]+)\)'
-    citations = re.findall(citation_pattern, final_answer)
-    
-    # If no citations found in a substantial report, add a note about citation requirements
-    if not citations and len(final_answer) > 300 and document_links:  # Only check substantial reports with available document links
-        print("Warning: Final report doesn't contain proper citations. Adding a reminder.")
-        final_answer += "\n\n**Note: This report should include proper citations in the format [filename](/path/to/file) for all referenced information. Please review and ensure all information is properly cited.**"
-    
-    # Using external LLM providers with OpenRouter: GPT-4o, Claude, Deepseek R1,... 
-    # final_answer = invoke_llm(
-    #     model='gpt-4o-mini',
-    #     system_prompt=report_prompt,
-    #     user_prompt=f"Generate a comprehensive report that answers this query: {user_instructions}. CRITICAL REQUIREMENT: You MUST produce a final report based on the retrieved information, even if it's not directly relevant to the query. In that case, clearly state the limitations but still provide a report using the available information. ALWAYS cite sources using the exact format [filename](/path/to/file) when referencing information."
-    # )
     
     return {"final_answer": final_answer}
 

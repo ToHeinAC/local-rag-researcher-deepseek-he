@@ -75,7 +75,7 @@ def parse_output(text):
         "response": output
     }
 
-def format_documents_with_metadata(documents):
+def format_documents_with_metadata(documents, preserve_original=False):
     formatted_docs = []
     for doc in documents:
         # Get the source filename from metadata
@@ -111,8 +111,13 @@ def format_documents_with_metadata(documents):
             files_dir = os.path.join(os.getcwd(), 'files')
             doc_path = os.path.join(files_dir, filename)
             source_link = f"[{filename}]({doc_path})"
+        
+        # When preserve_original is True, include the full original content without any modifications
+        if preserve_original:
+            formatted_doc = f"SOURCE: {source_link}\n\nContent: {doc.page_content}"
+        else:
+            formatted_doc = f"SOURCE: {source_link}\n\nContent: {doc.page_content}"
             
-        formatted_doc = f"SOURCE: {source_link}\n\nContent: {doc.page_content}"
         formatted_docs.append(formatted_doc)
     return "\n\n---\n\n".join(formatted_docs)
 

@@ -6,7 +6,7 @@
 - For each section (1-4 sections):
   - Subheading: Provide a relevant subheading to the section's key aspect.
   - Explanation: A detailed explanation of the concept or topic being discussed in the section.
-  - Findings/Details: Support the explanation with research findings, statistics, examples, or case studies.
+  - Deepdive Findings/Details (more than 3000 characters): Support the explanation with research findings, statistics, examples, or case studies.
 
 # Key Takeaways
 - Bullet points summarizing the most important insights or findings.

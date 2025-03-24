@@ -30,6 +30,7 @@ class Configuration:
     max_search_queries: int = 5
     enable_web_search: bool = False
     enable_quality_checker: bool = True
+    quality_check_loops: int = 1
     llm_model: str = "deepseek-r1:latest"
 
     @classmethod

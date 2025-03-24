@@ -41,12 +41,26 @@ def generate_workflow_visualization():
     mermaid_code += "  D --> E[Rank Search Summaries]\n"
     mermaid_code += "  E --> F[Generate Final Answer]\n"
     
-    # Add subgraph for Search & Summarize Query
+    # Add subgraph for Search & Summarize Query with clear quality check connection
     mermaid_code += "  subgraph Search & Summarize Query\n"
     mermaid_code += "    C1[Retrieve RAG Documents] --> C2[Evaluate Documents]\n"
     mermaid_code += "    C2 -->|Relevant| C4[Summarize Research]\n"
     mermaid_code += "    C2 -->|Not Relevant| C3[Web Research]\n"
     mermaid_code += "    C3 --> C4\n"
+    
+    # Quality check process with loops
+    mermaid_code += "    subgraph Quality Check Process\n"
+    mermaid_code += "      C5{Quality Check Enabled?}\n"
+    mermaid_code += "      C6[Quality Check]\n"
+    mermaid_code += "      C7[Improve Summary]\n"
+    mermaid_code += "      C5 -->|Yes| C6\n"
+    mermaid_code += "      C6 -->|Needs Improvement & Loops Remaining| C7\n"
+    mermaid_code += "      C7 --> C6\n"
+    mermaid_code += "    end\n"
+    
+    mermaid_code += "    C4 --> C5\n"
+    mermaid_code += "    C5 -->|No| C8[Return Summary]\n"
+    mermaid_code += "    C6 -->|Sufficient or No Loops Remaining| C8\n"
     mermaid_code += "  end\n"
     
     return mermaid_code
@@ -125,9 +139,13 @@ def generate_langgraph_visualization():
             # Add edge labels for conditional transitions
             edge_labels = {
                 ("search_and_summarize_query", "search_queries"): "More Queries",
-                ("search_and_summarize_query", "filter_search_summaries"): "No More Queries"
+                ("search_and_summarize_query", "filter_search_summaries"): "No More Queries",
             }
             nx.draw_networkx_edge_labels(G, pos, edge_labels=edge_labels, font_size=8)
+            
+            # Add a note about quality check loops
+            plt.figtext(0.5, 0.01, f"Note: Quality check can run multiple loops based on configuration", 
+                       ha="center", fontsize=10, bbox={"facecolor":"lightgray", "alpha":0.5, "pad":5})
             
             # Save the figure to a file
             temp_file_path = "langgraph_workflow.png"
@@ -140,7 +158,7 @@ def generate_langgraph_visualization():
         # If visualization fails, return the error
         raise Exception(f"Error generating visualization: {str(e)}")
 
-def generate_response(user_input, enable_web_search, report_structure, max_search_queries, llm_model, enable_quality_checker):
+def generate_response(user_input, enable_web_search, report_structure, max_search_queries, llm_model, enable_quality_checker, quality_check_loops=1):
     """
     Generate response using the researcher agent and stream steps
     """
@@ -159,6 +177,7 @@ def generate_response(user_input, enable_web_search, report_structure, max_searc
         "max_search_queries": max_search_queries,
         "llm_model": llm_model,
         "enable_quality_checker": enable_quality_checker,
+        "quality_check_loops": quality_check_loops,
     }}
 
     # Start timing the workflow
@@ -362,7 +381,21 @@ def main():
     st.session_state.enable_web_search = st.sidebar.checkbox("Enable Web Search", value=st.session_state.enable_web_search)
     
     # Enable quality checker checkbox
-    st.session_state.enable_quality_checker = st.sidebar.checkbox("Enable Quality Checker", value=st.session_state.enable_quality_checker)
+    col1, col2 = st.sidebar.columns([1, 1])
+    with col1:
+        st.session_state.enable_quality_checker = st.sidebar.checkbox("Enable Quality Checker", value=st.session_state.enable_quality_checker)
+    
+    # Add quality check loops input
+    with col2:
+        if "quality_check_loops" not in st.session_state:
+            st.session_state.quality_check_loops = 1  # Default value
+        st.session_state.quality_check_loops = st.sidebar.number_input(
+            "Loops",
+            min_value=1,
+            max_value=5,
+            value=st.session_state.quality_check_loops,
+            help="Number of quality check improvement loops"
+        )
 
     # Clear chat button in a single column
     if st.button("Clear Chat", use_container_width=True):
@@ -423,7 +456,8 @@ def main():
             report_structure,
             st.session_state.max_search_queries,
             st.session_state.llm_model,
-            st.session_state.enable_quality_checker
+            st.session_state.enable_quality_checker,
+            st.session_state.quality_check_loops
         )
 
         # Store assistant message
