@@ -32,6 +32,7 @@ class QualityCheckResult(BaseModel):
     is_complete: bool
     issues_found: list[str]
     missing_elements: list[str]
+    citation_issues: list[str] = []
     improvement_needed: bool
     improvement_suggestions: str
 
@@ -77,8 +78,10 @@ def parse_output(text):
 def format_documents_with_metadata(documents):
     formatted_docs = []
     for doc in documents:
+        # Get the source filename from metadata
         source = doc.metadata.get('source', 'Unknown source')
-        # Ensure we have an absolute path to the document in the files directory
+        
+        # Ensure we have an absolute path to the document
         doc_path = ''
         if 'path' in doc.metadata and os.path.isfile(doc.metadata['path']):
             doc_path = doc.metadata['path']
@@ -87,12 +90,27 @@ def format_documents_with_metadata(documents):
             potential_path = os.path.abspath(os.path.join(os.getcwd(), 'files', source))
             if os.path.isfile(potential_path):
                 doc_path = potential_path
+            else:
+                # If file doesn't exist in the current directory structure, still use the path format
+                # This ensures consistent citation format even for documents that might be processed later
+                doc_path = os.path.abspath(os.path.join(os.getcwd(), 'files', source))
         
-        # Format with markdown link if we have a path
+        # Extract just the filename for display
+        filename = os.path.basename(source) if source != 'Unknown source' else 'Unknown source'
+        
+        # Format with markdown link using the required format: [local_document_filename](local_document_full_path)
+        # Ensure the path includes the /files folder as specified in the updated requirements
         if doc_path:
-            source_link = f"[{source}]({doc_path})"
+            # Make sure the path contains the /files directory for consistency
+            if '/files/' not in doc_path and '\\files\\' not in doc_path:
+                files_dir = os.path.join(os.getcwd(), 'files')
+                doc_path = os.path.join(files_dir, filename)
+            source_link = f"[{filename}]({doc_path})"
         else:
-            source_link = source
+            # If no path is available, still create a standard format with a placeholder path
+            files_dir = os.path.join(os.getcwd(), 'files')
+            doc_path = os.path.join(files_dir, filename)
+            source_link = f"[{filename}]({doc_path})"
             
         formatted_doc = f"SOURCE: {source_link}\n\nContent: {doc.page_content}"
         formatted_docs.append(formatted_doc)

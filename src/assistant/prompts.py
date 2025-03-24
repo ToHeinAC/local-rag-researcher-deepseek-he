@@ -47,33 +47,27 @@ Documents:
 
 Your task is to create a comprehensive summary that addresses the query based on the provided documents. 
 
-IMPORTANT: When referencing information from specific documents, include the source document name and link in your summary using markdown format. For example: 'According to [document_name](document_link)...' or if there's no link available, just use the source name. This helps track where information comes from.
+**CRITICAL REQUIREMENT**: When referencing information from specific documents, you MUST include the source document name 
+and link in your summary using EXACTLY this markdown format: '[local_document_filename](local_document_full_path)'. 
+For example: 'According to [document.pdf](/path/to/document.pdf)...'. 
+The path to the document includes the /files folder in which the actual document is stored after processing.
+This citation format is mandatory for every piece of information you reference.
 
 You may use <think>...</think> tags to reason through your process, but this will be removed from the final output.
 
-Provide a well-structured, informative summary that directly addresses the query.
+Provide a well-structured, informative deep dive summary that directly addresses the query.
 
-KEY OBJECTIVES:
-1. Extract and synthesize critical findings from each source and mention specific paragraphs, sections etc.
-2. Return relevant passages with literally citing the retrieved information if possible
-3. Present key data points and metrics that support main conclusions
-4. Identify emerging patterns and significant insights
+**KEY OBJECTIVES**:
+1. Make the summary comprehensive, avoid repetition and unnecessary details
+2. Extract and synthesize critical findings from each source and mention specific paragraphs, sections etc.
+3. Return relevant passages with respect to the query by literally citing the retrieved information
+4. Present key data points and metrics that support main conclusions
 5. Structure information in a clear, logical flow
-6. Focus ONLY on information directly relevant to the query
-7. Clearly indicate when information is incomplete or uncertain
 
-REQUIREMENTS:
-- Begin immediately with key findings - no introductions
-- Focus on verifiable data and empirical evidence
-- Keep the summary brief, avoid repetition and unnecessary details
-- Prioritize information directly relevant to the query
-- If the documents don't contain sufficient information to address the query, clearly state this
-- Always use markdown format for document links: [document_name](document_link)
-- NEVER reference summary numbers, ALWAYS cite the original document directly
 """
 
 
-QUALITY_CHECKER_PROMPT = """You are a quality checker tasked with evaluating the quality of a summary with respect to the source documents.
+QUALITY_CHECKER_PROMPT = """You are a quality control assistant tasked with evaluating the quality of a summary based on source documents.
 
 Summary: {summary}
 
@@ -82,12 +76,18 @@ Source Documents:
 
 Your task is to assess the quality of the summary based on its accuracy, completeness, and relevance to the source documents.
 
-KEY OBJECTIVES:
-1. Verify that the summary accurately gives back the information literally in the source documents.
-2. Check if the summary is complete and covers all relevant information from the source documents.
-3. Evaluate the relevance of the summary to the source documents and ensure it does not introduce any new information not present in the source documents.
+**CRITICAL REQUIREMENT**: All citations in the summary MUST use the exact markdown format: '[local_document_filename](local_document_full_path)'. 
+For example: 'According to [document.pdf](/path/to/document.pdf)...'. 
+The path to the document includes the /files folder in which the actual document is stored after processing.
+Check that every piece of information from source documents is properly cited using this format.
+
+**KEY OBJECTIVES**:
+1. Verify that citations are present and all follow the exact format: '[local_document_filename](/path/to/document.pdf)'.
+2. Evaluate the relevance of the summary to the source documents and ensure it does not introduce any new information not present in the source documents.
+3. Verify that the summary accurately gives back the information literally in the source documents.
 4. Identify any inconsistencies, inaccuracies, or biases in the summary.
-5. Pay special attention to figures, data, section mentions, and specific details to ensure they are accurately represented.
+5. Pay special attention to data, section or paragraph mentions and specific details to ensure they are accurately represented.
+
 
 You must respond with a valid JSON object with the following structure (and nothing else):
 {{
@@ -96,6 +96,7 @@ You must respond with a valid JSON object with the following structure (and noth
   "is_complete": true,
   "issues_found": ["issue 1", "issue 2"],
   "missing_elements": ["missing element 1", "missing element 2"],
+  "citation_issues": ["citation issue 1", "citation issue 2"],
   "improvement_needed": false,
   "improvement_suggestions": "suggestions for improving the summary"
 }}
@@ -116,27 +117,25 @@ Information from research:
 
 You are the final report writer in the agentic RAG chain. 
 
-Your task is to create a comprehensive report that addresses the user's instruction based on the provided information. 
+Your task is to provide a well-structured, informative deep dive report that directly addresses the user's needs.
+**MOST IMPORTANTLY**: 
+- You MUST IN ANY CASE produce a final report based SOLELY on the information provided from the agentic retrieval process before. 
+- NO OTHER INFORMATION SHOULD BE INCLUDED IN THE FINAL REPORT.
+- If the information is not relevant to the user's query, explicitly state this limitation but still provide the best possible report based on available information.
+- Adhere strictly to the structure specified in the user's instruction and report structure.
 
-IMPORTANT: When referencing information from specific documents, include the source document name and link in your report using markdown format. For example: 'According to [document_name](document_link)...' or if there's no link available, just use the source name. This helps the user understand where the information comes from.
+**CRITICAL REQUIREMENT**: When referencing information from specific chunk of information, that is the summary from a source document, you MUST include the source document name 
+and link in your summary using EXACTLY this markdown format: '[local_document_filename](local_document_full_path)'. 
+For example: 'According to [document.pdf](/path/to/document.pdf)...'. 
+The path to the document includes the /files folder in which the actual document is stored after processing.
+This citation format is mandatory for every piece of information you reference.
 
 You may use <think>...</think> tags to reason through your process, but this will be removed from the final output.
 
-Provide a well-structured, informative report that directly addresses the user's needs.
-
-# **CRITICAL GUIDELINES:**
-1. Focus ONLY on factual, objective information found from the retrieval process before; if no facts are available, reply saying that the query cannot be answered from the sources given
-2. Adhere strictly to the structure specified in the user's instruction.
-3. Start IMMEDIATELY with the summary content - no introductions or meta-commentary
-4. Extract and synthesize critical findings from each source and mention specific paragraphs, sections etc.
-5. Return relevant passages with literally citing the retrieved information if possible
-6. Present key data points and metrics that support main conclusions
-7. Avoid redundancy, repetition, or unnecessary commentary.
-8. Focus ONLY on information directly relevant to the user's instruction
-9. If summaries contain contradictory information, prioritize information from the higher-relevance summaries
-10. When referencing information, ALWAYS cite the original document directly with its link: 'According to [document_name](document_link)...'
-11. If the summaries don't contain sufficient information to address the instruction, clearly state what aspects couldn't be addressed
-12. Maintain a logical flow of information, even if the input summaries are disconnected
-13. Always use markdown format for document links: [document_name](document_link)
-14. NEVER reference summary numbers, ALWAYS cite the original document directly
+**KEY OBJECTIVES**:
+1. ALWAYS cite the original document directly with its link using the exact format: '[local_document_filename](/path/to/document.pdf)' 
+2. Focus ONLY on factual, objective information found from the retrieval process before; if no facts are available, reply saying that the query cannot be answered from the sources given
+3. Return relevant passages with literally citing the retrieved information if possible
+4. Present key data points and metrics that support main conclusions
+5. Avoid redundancy, repetition, or unnecessary commentary.       
 """
