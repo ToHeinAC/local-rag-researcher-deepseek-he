@@ -75,7 +75,7 @@ Information from research:
 {information}
 
 **Key requirements**:
-1. Use only the information provided from the research process - do not add external information
+1. Use only the information provided from the information from research- do not add external information
 2. Structure the report according to the provided template
 3. Focus on answering the user's query clearly and concisely
 4. Preserve original wording and literal information from the research whenever possible
