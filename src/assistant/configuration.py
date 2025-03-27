@@ -32,6 +32,8 @@ class Configuration:
     enable_quality_checker: bool = True
     quality_check_loops: int = 1
     llm_model: str = "deepseek-r1:latest"
+    #embedding_model: str = "sentence-transformers/all-mpnet-base-v2"
+    embedding_model: str = "jinaai/jina-embeddings-v2-base-de"
 
     @classmethod
     def from_runnable_config(
@@ -46,4 +48,5 @@ class Configuration:
             for f in fields(cls)
             if f.init
         }
+        values['embedding_model'] = os.environ.get('EMBEDDING_MODEL', configurable.get('embedding_model'))
         return cls(**{k: v for k, v in values.items() if v})

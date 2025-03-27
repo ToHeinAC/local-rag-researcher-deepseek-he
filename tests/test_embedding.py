@@ -1,7 +1,7 @@
 import os
 import shutil
 from src.assistant.rag_helpers import load_embed
-from src.assistant.vector_db import get_embedding_model, search_documents, VECTOR_DB_PATH, DEFAULT_TENANT_ID
+from src.assistant.vector_db import get_embedding_model, search_documents, get_vector_db_path, DEFAULT_TENANT_ID
 
 def test_embedding_and_retrieval():
     # Create a test directory
@@ -16,11 +16,14 @@ def test_embedding_and_retrieval():
     # Get the embedding model
     embeddings = get_embedding_model()
     
+    # Get the vector DB path with embedding model name
+    vector_db_path = get_vector_db_path()
+    
     # Load and embed the test document
     print("Embedding test document...")
     load_embed(
         folder=test_dir,
-        vdbdir=VECTOR_DB_PATH,
+        vdbdir=vector_db_path,
         embed_llm=embeddings,
         similarity="cosine",
         c_size=2000,

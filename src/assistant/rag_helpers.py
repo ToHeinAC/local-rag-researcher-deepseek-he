@@ -18,7 +18,7 @@ except LookupError:
 
 from nltk.tokenize import word_tokenize
 
-# Define constants
+# Define constants - must match the value in vector_db.py
 VECTOR_DB_PATH = "database"
 
 # Define functions

@@ -255,15 +255,18 @@ def process_uploaded_files(uploaded_files):
         
         # Process all files in the folder using the new embedding approach
         from src.assistant.rag_helpers import load_embed
-        from src.assistant.vector_db import get_embedding_model, VECTOR_DB_PATH, DEFAULT_TENANT_ID
+        from src.assistant.vector_db import get_embedding_model, get_vector_db_path, DEFAULT_TENANT_ID
         
         # Get the embedding model
         embeddings = get_embedding_model()
         
+        # Get the vector DB path with embedding model name
+        vector_db_path = get_vector_db_path()
+        
         # Load and embed the documents
         load_embed(
             folder=files_folder,
-            vdbdir=VECTOR_DB_PATH,
+            vdbdir=vector_db_path,
             embed_llm=embeddings,
             similarity="cosine",
             c_size=2000,
