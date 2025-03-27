@@ -194,6 +194,11 @@ def generate_response(user_input, enable_web_search, report_structure, max_searc
         with langgraph_status:
             st.write("### LangGraph Workflow Visualization")
             
+            # Display embedding model information
+            from src.assistant.configuration import Configuration
+            embedding_model = Configuration().embedding_model
+            st.info(f"**Embedding Model:** {embedding_model}")
+            
             # Display the mermaid diagram
             st.markdown(f"```mermaid\n{generate_workflow_visualization()}\n```")
             

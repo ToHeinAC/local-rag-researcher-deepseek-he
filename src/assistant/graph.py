@@ -4,7 +4,7 @@ from langgraph.constants import Send
 from langgraph.graph import START, END, StateGraph
 from langchain_core.runnables.config import RunnableConfig
 from src.assistant.configuration import Configuration
-from src.assistant.vector_db import get_or_create_vector_db, search_documents
+from src.assistant.vector_db import get_or_create_vector_db, search_documents, get_embedding_model_path
 from src.assistant.state import ResearcherState, ResearcherStateInput, ResearcherStateOutput, QuerySearchState, QuerySearchStateInput, QuerySearchStateOutput, SummaryRanking
 from src.assistant.prompts import RESEARCH_QUERY_WRITER_PROMPT, RELEVANCE_EVALUATOR_PROMPT, SUMMARIZER_PROMPT, REPORT_WRITER_PROMPT, QUALITY_CHECKER_PROMPT
 from src.assistant.utils import format_documents_with_metadata, invoke_llm, invoke_ollama, parse_output, tavily_search, Evaluation, Queries, SummaryRankings, SummaryRelevance, QualityCheckResult
@@ -14,6 +14,14 @@ import time
 # Number of query to process in parallel for each batch
 # Change depending on the performance of the system
 BATCH_SIZE = 3
+
+# Display embedding model information
+def display_embedding_model_info(state: ResearcherState):
+    """Display information about which embedding model is being used."""
+    config = Configuration()
+    embedding_model = config.embedding_model
+    print(f"\n=== Using embedding model: {embedding_model} ===\n")
+    return {}
 
 def generate_research_queries(state: ResearcherState, config: RunnableConfig):
     print("--- Generating research queries ---")
@@ -42,7 +50,10 @@ def generate_research_queries(state: ResearcherState, config: RunnableConfig):
     #     output_format=Queries
     # )
 
-    return {"research_queries": result.queries}
+    # Add the original human query to the list of research queries
+    all_queries = [user_instructions] + result.queries
+    
+    return {"research_queries": all_queries}
 
 def search_queries(state: ResearcherState):
     # Kick off the search for each query by calling initiate_query_research
@@ -77,6 +88,11 @@ def retrieve_rag_documents(state: QuerySearchState):
     """Retrieve documents from the RAG database."""
     print("--- Retrieving documents ---")
     query = state["query"]
+    
+    # Display embedding model information for this retrieval operation
+    config = Configuration()
+    embedding_model = config.embedding_model
+    print(f"  [Using embedding model for retrieval: {embedding_model}]")
     
     # Use the new search_documents function from vector_db.py
     documents = search_documents(query, k=3)
@@ -526,6 +542,7 @@ query_search_subgraph.add_edge("improve_summary", "quality_check_summary")
 researcher_graph = StateGraph(ResearcherState, input=ResearcherStateInput, output=ResearcherStateOutput, config_schema=Configuration)
 
 # Define main researcher nodes
+researcher_graph.add_node(display_embedding_model_info)
 researcher_graph.add_node(generate_research_queries)
 researcher_graph.add_node(search_queries)
 researcher_graph.add_node("search_and_summarize_query", query_search_subgraph.compile())
@@ -534,7 +551,8 @@ researcher_graph.add_node(rank_search_summaries)
 researcher_graph.add_node(generate_final_answer)
 
 # Define transitions for the main graph
-researcher_graph.add_edge(START, "generate_research_queries")
+researcher_graph.add_edge(START, "display_embedding_model_info")
+researcher_graph.add_edge("display_embedding_model_info", "generate_research_queries")
 researcher_graph.add_edge("generate_research_queries", "search_queries")
 researcher_graph.add_conditional_edges("search_queries", initiate_query_research, ["search_and_summarize_query"])
 researcher_graph.add_conditional_edges("search_and_summarize_query", check_more_queries, ["search_queries", "filter_search_summaries"])
