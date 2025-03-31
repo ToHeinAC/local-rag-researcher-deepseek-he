@@ -10,8 +10,7 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from src.assistant.rag_helpers import load_embed, similarity_search_for_tenant
 from langchain_community.embeddings import HuggingFaceEmbeddings
-from langchain_core.messages import SystemMessage, HumanMessage
-from langchain_community.llms import Ollama
+from src.assistant.rag_helpers import transform_documents, source_summarizer_ollama
 
 # Set page config
 st.set_page_config(
@@ -56,45 +55,18 @@ def get_embedding_model(model_name):
         model_kwargs={'device': 'cpu'}
     )
 
-# Function to transform documents
-def transform_documents(documents):
-    """
-    Transforms a list of Document objects into a specific dictionary format.
-    
-    Args:
-        documents (list): List of Document objects with metadata and page_content
-        
-    Returns:
-        list: List of dictionaries with content and metadata in the required format
-    """
-    samples = []
-    
-    for doc in documents:
-        transformed_doc = {
-            "content": doc.page_content,
-            "metadata": {
-                "name": doc.metadata['id'],
-                "path": doc.metadata['source']
-            }
-        }
-        samples.append(transformed_doc)
-
-    return samples
-
-SUMMARIZER_SYSTEM_PROMPT = """
-You are an expert summarizer working within a RAG system. Your task is to create a comprehensive, accurate summary of the provided information while properly attributing all facts to their sources.
+# Summarizer system prompt
+SUMMARIZER_SYSTEM_PROMPT_ORIG = """
+You are an expert summarizer working within a RAG system. Your task is to create a deep, comprehensive and accurate representation of the provided original information while properly attributing all facts to their sources.
 
 Guidelines:
-- Create a clear, coherent summary using neutral and professional language
-- Focus on the most important facts and insights
+- Create a clear and coherent summary using neutral and professional language
 - Maintain factual accuracy without adding new information
 - Maintain exact figures, data points, sections and paragraphs
-- Cite EVERY piece of information using the format [Document Name](document_path)
-- Place citations immediately after the relevant information
-- Ensure each citation is correctly matched to its source
+- For each piece of information, you MUST CITE the original source, i.e. the original document, using the format [Document Name](document_path)
 - Return only the plain text summary without any reliminary remarks and without markdown formatting
 
-Important: The citation information [Document Name](document_path) is stored in a dict and provided within the 'metadata'
+Useful hint: The citation information [Document Name](document_path) is stored in a dict and provided within the 'metadata'
 {{
 "content": doc.page_content,
 "metadata": {
@@ -102,64 +74,32 @@ Important: The citation information [Document Name](document_path) is stored in 
     "path": doc.metadata['source']
 }}
 """
-# Function to summarize sources using Ollama
-def source_summarizer_ollama(query, context_documents, llm_model="deepseek-r1"):
-    system_message = SUMMARIZER_SYSTEM_PROMPT
 
-    formatted_context = "\n".join(
-        f"Content: {doc['content']}\nSource: {doc['metadata']['name']}\nPath: {doc['metadata']['path']}"
-        for doc in context_documents
-    )
+SUMMARIZER_SYSTEM_PROMPT = """
+You are an expert AI summarizer. Create a factual summary from provided documents with EXACT source citations. Follow these rules:
 
-    prompt = f"""
-    Based on the user's query
+1. **Citation Format**: For citations, ALWAYS use the EXACT format [Source_filename] after each fact. 
+You find the Source_filename in the provided metadata with the following structure:
+\nContent: some content
+\nSource_filename: the corresponding Source_filename
+\nSource_path: the corresponding fullpath
 
-    {query}
+2. **Content Rules**:
+   - Maintain exact figures, data points, sections and paragraphs
+   - No markdown, formulate only plain text and complete sentences
+   - NO new information or opinions
 
-    , here are the documents to summarize:
-    
-    {formatted_context}
-    
-    Provide a deep summary with proper citations:
-    """
-    
-    # Initialize ChatOllama with the specified model and temperature
-    llm = Ollama(model=llm_model, temperature=0.1, repeat_penalty=1.2) 
-    # For RAG systems like your summarizer, consider:
-    #    Using lower temperatures (0.1-0.3) for factual accuracy
-    #   Combining with repeat_penalty=1.1-1.3 to avoid redundant content
-    #   Monitoring token usage with num_ctx for long documents
-    
-    # Format messages for LangChain
-    messages = [
-        SystemMessage(content=system_message),
-        HumanMessage(content=prompt)
-    ]
-    
-    # Get response from the model
-    response = llm.invoke(messages)
-    
-    # Extract content from response
-    response_content = response
-    
-    # Clean markdown formatting if present
-    try:
-        final_content = re.sub(r"<think>.*?</think>", "", response_content, flags=re.DOTALL).strip()
-    except:
-        final_content = response_content.strip()
+**Example Input**:
+\nContent: 'The 2025 budget for infrastructure is €4.2M.',
+\nSource_filename: 'City_Budget.pdf'
+\nSource_path: './some/path/to/City_Budget.pdf'
+  
+**Example Output**:
+The 2025 fiscal plan allocates €4.2 million for infrastructure [City_Budget.pdf].
 
-    # Extract metadata from all documents
-    document_names = [doc['metadata']['name'] for doc in context_documents]
-    document_paths = [doc['metadata']['path'] for doc in context_documents]
-
-    return {
-        "content": final_content,
-        "metadata": {
-            "name": document_names,
-            "path": document_paths
-        }
-    }
-
+**Current Task**:
+Create a deep, comprehensive and accurate representation of the provided original information:
+"""
 # Step 1: Choose Embedding Model
 with tab1:
     st.header("Select Embedding Model")
@@ -325,7 +265,7 @@ with tab3:
                 st.subheader("Summary")
                 with st.spinner(f"Generating summary using {selected_llm}..."):
                     start_time = time.time()
-                    summary = source_summarizer_ollama(query, transformed_results, selected_llm)
+                    summary = source_summarizer_ollama(query, transformed_results, SUMMARIZER_SYSTEM_PROMPT, selected_llm)
                     end_time = time.time()
                     
                     st.markdown(summary["content"])

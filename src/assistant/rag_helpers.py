@@ -9,6 +9,8 @@ from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_community.embeddings import HuggingFaceEmbeddings
 from typing import List
 import nltk
+from langchain_community.llms import Ollama
+from langchain_core.messages import SystemMessage, HumanMessage
 
 # Download nltk data if not already downloaded
 try:
@@ -203,3 +205,87 @@ def load_embed(folder, vdbdir, embed_llm, similarity="cosine", c_size=1000, c_ov
         print(f"Chunks already available, no new chunks added to vector database.")
 
     return dirname, tenant_id
+
+# Function to transform documents
+def transform_documents(documents):
+    """
+    Transforms a list of Document objects into a specific dictionary format.
+    
+    Args:
+        documents (list): List of Document objects with metadata and page_content
+        
+    Returns:
+        list: List of dictionaries with content and metadata in the required format
+    """
+    samples = []
+    
+    for doc in documents:
+        transformed_doc = {
+            "content": doc.page_content,
+            "metadata": {
+                "name": doc.metadata['id'],
+                "path": doc.metadata['source']
+            }
+        }
+        samples.append(transformed_doc)
+
+    return samples
+
+# Function to summarize sources using Ollama
+def source_summarizer_ollama(query, context_documents, system_message, llm_model="deepseek-r1"):
+    formatted_context = "\n".join(
+        f"Content: {doc['content']}\nSource: {doc['metadata']['name']}\nPath: {doc['metadata']['path']}"
+        for doc in context_documents
+    )
+    #formatted_context = "\n".join(
+    #    f"{str(doc)}"
+    #    for doc in context_documents
+    #)
+    prompt = f"""
+    Based on the user's query
+
+    {query}
+
+    , here are the documents to summarize:
+    
+    {formatted_context}
+    
+    Provide a deep summary with proper citations:
+    """
+    
+    # Initialize ChatOllama with the specified model and temperature
+    llm = Ollama(model=llm_model, temperature=0.1, repeat_penalty=1.2) 
+    # For RAG systems like your summarizer, consider:
+    #    Using lower temperatures (0.1-0.3) for factual accuracy
+    #   Combining with repeat_penalty=1.1-1.3 to avoid redundant content
+    #   Monitoring token usage with num_ctx for long documents
+    
+    # Format messages for LangChain
+    messages = [
+        SystemMessage(content=system_message),
+        HumanMessage(content=prompt)
+    ]
+    
+    # Get response from the model
+    response = llm.invoke(messages)
+    
+    # Extract content from response
+    response_content = response
+    
+    # Clean markdown formatting if present
+    try:
+        final_content = re.sub(r"<think>.*?</think>", "", response_content, flags=re.DOTALL).strip()
+    except:
+        final_content = response_content.strip()
+
+    # Extract metadata from all documents
+    document_names = [doc['metadata']['name'] for doc in context_documents]
+    document_paths = [doc['metadata']['path'] for doc in context_documents]
+
+    return {
+        "content": final_content,
+        "metadata": {
+            "name": document_names,
+            "path": document_paths
+        }
+    }    

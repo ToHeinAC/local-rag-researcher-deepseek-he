@@ -4,10 +4,11 @@ import warnings
 import logging
 import torch
 import os
-from PIL import Image
-import io
+import re
+import sys
 import time
 from datetime import datetime, timedelta
+from pathlib import Path
 
 # Suppress specific PyTorch warnings
 warnings.filterwarnings("ignore", category=RuntimeWarning)
@@ -15,6 +16,9 @@ logging.getLogger("streamlit").setLevel(logging.ERROR)
 
 from src.assistant.graph import researcher, researcher_graph
 from src.assistant.utils import get_report_structures, process_uploaded_files, clear_cuda_memory
+from src.assistant.rag_helpers import load_embed, similarity_search_for_tenant, transform_documents, source_summarizer_ollama
+from src.assistant.prompts import SUMMARIZER_SYSTEM_PROMPT
+from langchain_community.embeddings import HuggingFaceEmbeddings
 from dotenv import load_dotenv
 
 # Try to import pyperclip, but handle if it's not available
@@ -25,6 +29,37 @@ except (ImportError, Exception):
     PYPERCLIP_AVAILABLE = False
 
 load_dotenv()
+
+# Define paths
+DEFAULT_DATA_FOLDER = os.path.join(os.path.dirname(__file__), "data")
+DATABASE_PATH = os.path.join(os.path.dirname(__file__), "database")
+
+# Set page config
+st.set_page_config(
+    page_title="RAG Deep Researcher",
+    page_icon="🔍",
+    layout="wide"
+)
+
+# Function to create a clean directory name from embedding model
+def clean_model_name(model_name):
+    return model_name.replace('/', '--').replace('\\', '--')
+
+# Function to extract embedding model name from database directory
+def extract_embedding_model(db_dir_name):
+    # Convert from format like 'sentence-transformers--all-mpnet-base-v2--2000--400'
+    # to 'sentence-transformers/all-mpnet-base-v2'
+    parts = db_dir_name.split('--')
+    if len(parts) >= 2:
+        return parts[0].replace('--', '/') + '/' + parts[1]
+    return None
+
+# Function to get embedding model
+def get_embedding_model(model_name):
+    return HuggingFaceEmbeddings(
+        model_name=model_name,
+        model_kwargs={'device': 'cpu'}
+    )
 
 def generate_workflow_visualization():
     """
@@ -158,9 +193,11 @@ def generate_langgraph_visualization():
         # If visualization fails, return the error
         raise Exception(f"Error generating visualization: {str(e)}")
 
-def generate_response(user_input, enable_web_search, report_structure, max_search_queries, llm_model, enable_quality_checker, quality_check_loops=1):
+def generate_response(user_input, enable_web_search, report_structure, max_search_queries, report_llm, enable_quality_checker, quality_check_loops=1, use_ext_database=False, selected_database=None, k_results=3):
     """
     Generate response using the researcher agent and stream steps
+    If use_ext_database is True, it will use an external database for document retrieval
+    The original workflow is always enabled
     """
     # Clear CUDA memory before processing a new query
     clear_cuda_memory()
@@ -175,7 +212,7 @@ def generate_response(user_input, enable_web_search, report_structure, max_searc
         "enable_web_search": enable_web_search,
         "report_structure": report_structure,
         "max_search_queries": max_search_queries,
-        "llm_model": llm_model,
+        "llm_model": report_llm,  # Use the report writing LLM for the final report
         "enable_quality_checker": enable_quality_checker,
         "quality_check_loops": quality_check_loops,
     }}
@@ -189,6 +226,82 @@ def generate_response(user_input, enable_web_search, report_structure, max_searc
     # Create a placeholder for the elapsed time
     elapsed_time_placeholder = st.empty()
     
+    # If using external database, perform retrieval and summarization first
+    if use_ext_database and selected_database:
+        # Create the status for the retrieval process
+        retrieval_status = st.status("**Document Retrieval...**", state="running")
+        
+        try:
+            with retrieval_status:
+                st.write("### Document Retrieval")
+                
+                # Display embedding model information
+                embedding_model_name = extract_embedding_model(selected_database)
+                st.info(f"**Embedding Model:** {embedding_model_name}")
+                
+                # Get embedding model
+                embed_model = get_embedding_model(embedding_model_name)
+                
+                # Get tenant ID from the database directory
+                database_path = os.path.join(DATABASE_PATH, selected_database)
+                tenant_dirs = [d for d in os.listdir(database_path) if os.path.isdir(os.path.join(database_path, d))]
+                
+                if not tenant_dirs:
+                    st.error(f"No tenant directories found in {database_path}")
+                    retrieval_status.update(state="error", label=f"**Error: No tenant directories found**")
+                else:
+                    tenant_id = tenant_dirs[0]  # Use the first tenant directory
+                    
+                    st.write(f"**Using tenant ID:** {tenant_id}")
+                    
+                    # Perform similarity search
+                    st.write("### Retrieving Documents")
+                    with st.spinner("Performing similarity search..."):
+                        results = similarity_search_for_tenant(
+                            tenant_id=tenant_id,
+                            embed_llm=embed_model,
+                            persist_directory=database_path,
+                            similarity="cosine",
+                            normal=True,
+                            query=user_input,
+                            k=k_results
+                        )
+                    
+                    # Transform documents
+                    transformed_results = transform_documents(results)
+                    st.write(f"Retrieved {len(transformed_results)} documents")
+                    
+                    # Display retrieved documents
+                    st.subheader("Retrieved Documents")
+                    for i, doc in enumerate(results):
+                        with st.expander(f"Document {i+1}: {doc.metadata.get('source', 'Unknown')}"):
+                            st.write(f"**Source:** {doc.metadata.get('source', 'Unknown')}")
+                            st.write(f"**Path:** {doc.metadata.get('path', 'Unknown')}")
+                            st.write(f"**Content:**\n{doc.page_content}")
+                    
+                    # Summarize the results using the summarization LLM
+                    st.subheader("Document Summary")
+                    with st.spinner(f"Generating summary using {st.session_state.summarization_llm}..."):
+                        start_time_summary = time.time()
+                        summary = source_summarizer_ollama(user_input, transformed_results, SUMMARIZER_SYSTEM_PROMPT, st.session_state.summarization_llm)
+                        end_time_summary = time.time()
+                        
+                        st.markdown(summary["content"])
+                        st.info(f"Summary generated in {end_time_summary - start_time_summary:.2f} seconds using {st.session_state.summarization_llm}")
+                    
+                    # Update the user instructions with the summary to enhance the research
+                    initial_state["user_instructions"] = f"{user_input}\n\nAdditional context from document retrieval:\n{summary['content']}"
+                    
+                    # Update status to complete
+                    retrieval_status.update(state="complete", label="**Document Retrieval Complete**")
+                
+        except Exception as e:
+            # Update status to error
+            if 'retrieval_status' in locals():
+                retrieval_status.update(state="error", label=f"**Retrieval Error: {str(e)}**")
+            st.error(f"Error during document retrieval: {str(e)}")
+    
+    # Continue with the original workflow regardless of whether external database was used
     try:
         # Display the workflow visualization
         with langgraph_status:
@@ -289,7 +402,7 @@ def generate_response(user_input, enable_web_search, report_structure, max_searc
                     steps.append({"step": key, "content": value})
         
         # Update status to complete
-        langgraph_status.update(state="complete", label="**Using Langgraph** (Research completed)")
+        langgraph_status.update(state="complete", label="**Research Completed**")
         
         # Return the final report
         return steps[-1]["content"] if steps else "No response generated"
@@ -306,6 +419,14 @@ def clear_chat():
     st.session_state.messages = []
     st.session_state.processing_complete = False
     st.session_state.uploader_key = 0
+    if 'selected_database' in st.session_state:
+        st.session_state.selected_database = None
+    if 'use_ext_database' in st.session_state:
+        st.session_state.use_ext_database = False
+    if 'summarization_llm' in st.session_state:
+        st.session_state.summarization_llm = "deepseek-r1:latest"
+    if 'report_llm' in st.session_state:
+        st.session_state.report_llm = "deepseek-r1:latest"
 
 def copy_to_clipboard(text):
     """Safely copy text to clipboard if pyperclip is available"""
@@ -318,12 +439,10 @@ def copy_to_clipboard(text):
     return False
 
 def main():
-    st.set_page_config(page_title="RAG Deep Researcher", layout="wide")
-    
     # Create header with two columns
     header_col1, header_col2 = st.columns([0.6, 0.4])
     with header_col1:
-        st.title(" RAG Deep Researcher")
+        st.title("RAG Deep Researcher")
     with header_col2:
         st.image("Header für Chatbot.png", use_container_width=True)
 
@@ -348,20 +467,45 @@ def main():
         st.session_state.enable_quality_checker = True  # Default quality checker setting
     if "workflow_start_time" not in st.session_state:
         st.session_state.workflow_start_time = None  # For tracking workflow elapsed time
+    if "use_ext_database" not in st.session_state:
+        st.session_state.use_ext_database = False  # Default external database setting
+    if "selected_database" not in st.session_state:
+        st.session_state.selected_database = None  # Default selected database
+    if "k_results" not in st.session_state:
+        st.session_state.k_results = 3  # Default number of results to retrieve
+    if "summarization_llm" not in st.session_state:
+        st.session_state.summarization_llm = "deepseek-r1:latest"  # Default summarization LLM
+    if "report_llm" not in st.session_state:
+        st.session_state.report_llm = "deepseek-r1:latest"  # Default report writing LLM
 
     # Sidebar configuration
     st.sidebar.title("Research Settings")
 
-    # Add LLM model selector to sidebar
-    llm_models = ["deepseek-r1:latest", "deepseek-r1:70b", "qwq", "gemma3:27b", "mistral-small:latest"]
-    st.session_state.llm_model = st.sidebar.selectbox(
-        "Select LLM Model",
+    # Add Report LLM model selector to sidebar
+    llm_models = ["deepseek-r1:latest", "deepseek-r1:70b", "qwq", "gemma3:27b", "mistral-small:latest", 
+                 "deepseek-r1:1.5b", "llama3.1:8b-instruct-q4_0", "llama3.2", "gemma3:4b", "phi4-mini", 
+                 "mistral:instruct", "mistrallite"]
+    
+    st.sidebar.subheader("LLM Models")
+    
+    # Report writing LLM
+    st.session_state.report_llm = st.sidebar.selectbox(
+        "Report Writing LLM",
         options=llm_models,
-        index=llm_models.index(st.session_state.llm_model),
-        help="Choose the LLM model to use for research"
+        index=llm_models.index(st.session_state.report_llm) if st.session_state.report_llm in llm_models else 0,
+        help="Choose the LLM model to use for final report generation"
+    )
+    
+    # Summarization LLM
+    st.session_state.summarization_llm = st.sidebar.selectbox(
+        "Summarization LLM",
+        options=llm_models,
+        index=llm_models.index(st.session_state.summarization_llm) if st.session_state.summarization_llm in llm_models else 0,
+        help="Choose the LLM model to use for document summarization"
     )
 
     # Add report structure selector to sidebar
+    st.sidebar.subheader("Report Structure")
     report_structures = get_report_structures()
     default_report = "standard report"
 
@@ -374,6 +518,7 @@ def main():
     st.session_state.selected_report_structure = report_structures[selected_structure]
 
     # Maximum search queries input
+    st.sidebar.subheader("Search Settings")
     st.session_state.max_search_queries = st.sidebar.number_input(
         "Max Number of Search Queries",
         min_value=1,
@@ -386,6 +531,7 @@ def main():
     st.session_state.enable_web_search = st.sidebar.checkbox("Enable Web Search", value=st.session_state.enable_web_search)
     
     # Enable quality checker checkbox
+    st.sidebar.subheader("Quality Control")
     col1, col2 = st.sidebar.columns([1, 1])
     with col1:
         st.session_state.enable_quality_checker = st.sidebar.checkbox("Enable Quality Checker", value=st.session_state.enable_quality_checker)
@@ -401,7 +547,47 @@ def main():
             value=st.session_state.quality_check_loops,
             help="Number of quality check improvement loops"
         )
-
+    
+    # Add Retrieval options
+    st.sidebar.markdown("---")
+    st.sidebar.subheader("Retrieval Options")
+    
+    # Enable external database checkbox
+    st.session_state.use_ext_database = st.sidebar.checkbox("Use ext. Database", value=st.session_state.use_ext_database, 
+                                                 help="Use an existing database for document retrieval")
+    
+    # Database selection
+    if st.session_state.use_ext_database:
+        # Get available databases
+        database_dir = Path(DATABASE_PATH)
+        database_options = [d.name for d in database_dir.iterdir() if d.is_dir()]
+        
+        if database_options:
+            # Select database
+            selected_db = st.sidebar.selectbox(
+                "Select Database",
+                options=database_options,
+                index=database_options.index(st.session_state.selected_database) if st.session_state.selected_database in database_options else 0,
+                help="Choose a database to use for retrieval"
+            )
+            st.session_state.selected_database = selected_db
+            
+            # Display embedding model
+            embedding_model_name = extract_embedding_model(selected_db)
+            if embedding_model_name:
+                st.sidebar.info(f"Embedding Model: {embedding_model_name}")
+            
+            # Number of results to retrieve
+            st.session_state.k_results = st.sidebar.slider(
+                "Number of results to retrieve", 
+                min_value=1, 
+                max_value=10, 
+                value=st.session_state.k_results
+            )
+        else:
+            st.sidebar.warning("No databases found. Please upload documents first.")
+            st.session_state.use_ext_database = False
+    
     # Clear chat button in a single column
     if st.button("Clear Chat", use_container_width=True):
         clear_chat()
@@ -412,27 +598,26 @@ def main():
         st.markdown("""
         ### How to Use the RAG Deep Researcher
         
-        1. **Upload Documents** (Optional)
-           - Use the sidebar to upload PDF, TXT, CSV, or MD files
-           - Click "Process Files" to add them to the knowledge base
+        1. **Choose RAG Method**:
+           - **Option 1**: Upload your own documents using the sidebar
+           - **Option 2**: Select an existing database from the dropdown
         
-        2. **Configure Settings** (Optional)
+        2. **Configure Settings** (Optional):
            - Select an LLM model from the dropdown menu
            - Choose a report structure template
            - Set the maximum number of search queries (1-10)
            - Enable web search if needed
         
-        3. **Ask Your Question**
+        3. **Ask Your Question**:
            - Type your research question in the chat input
            - Be specific and clear about what information you need
         
-        4. **Review the Results**
-           - The system will generate research queries based on your question
-           - It will search through documents and summarize findings
+        4. **Review the Results**:
+           - The system will retrieve relevant documents and summarize findings
            - A comprehensive final answer will be provided
            - You can copy the response using the clipboard button
         
-        5. **Start a New Research**
+        5. **Start a New Research**:
            - Click "Clear Chat" to start a new research session
         """)
 
@@ -460,9 +645,12 @@ def main():
             st.session_state.enable_web_search, 
             report_structure,
             st.session_state.max_search_queries,
-            st.session_state.llm_model,
+            st.session_state.report_llm,
             st.session_state.enable_quality_checker,
-            st.session_state.quality_check_loops
+            st.session_state.quality_check_loops,
+            st.session_state.use_ext_database,
+            st.session_state.selected_database,
+            st.session_state.k_results
         )
 
         # Store assistant message
@@ -479,45 +667,44 @@ def main():
                 if st.button("📋", key=f"copy_{len(st.session_state.messages)}"):
                     copy_to_clipboard(assistant_response)
 
-            # Display the image if available
-            if "image_path" in st.session_state and st.session_state.image_path:
-                st.image(st.session_state.image_path, caption="Generated Image", use_container_width=True)
-
     # Upload file logic
-    uploaded_files = st.sidebar.file_uploader(
-        "Upload New Documents",
-        type=["pdf", "txt", "csv", "md"],
-        accept_multiple_files=True,
-        key=f"uploader_{st.session_state.uploader_key}"
-    )
+    if not st.session_state.use_ext_database:  # Only show upload option when not using external database
+        st.sidebar.markdown("---")
+        st.sidebar.subheader("Upload Documents")
+        
+        uploaded_files = st.sidebar.file_uploader(
+            "Upload New Documents",
+            type=["pdf", "txt", "csv", "md"],
+            accept_multiple_files=True,
+            key=f"uploader_{st.session_state.uploader_key}"
+        )
 
-    # Check if files are uploaded but not yet processed
-    if uploaded_files:
-        st.session_state.files_ready = True  # Mark that files are available
-        st.session_state.processing_complete = False  # Reset processing status
+        # Check if files are uploaded but not yet processed
+        if uploaded_files:
+            st.session_state.files_ready = True  # Mark that files are available
+            st.session_state.processing_complete = False  # Reset processing status
 
-    # Display the "Process Files" button **only if files are uploaded but not processed**
-    if st.session_state.files_ready and not st.session_state.processing_complete:
-        process_button_placeholder = st.sidebar.empty()  # Placeholder for dynamic updates
+        # Display the "Process Files" button **only if files are uploaded but not processed**
+        if st.session_state.files_ready and not st.session_state.processing_complete:
+            process_button_placeholder = st.sidebar.empty()  # Placeholder for dynamic updates
 
-        with process_button_placeholder.container():
-            process_clicked = st.button("Process Files", use_container_width=True)
+            with process_button_placeholder.container():
+                process_clicked = st.button("Process Files", use_container_width=True)
 
-        if process_clicked:
-            with process_button_placeholder:
-                with st.status("Processing files...", expanded=False) as status:
-                    # Process files (Replace this with your actual function)
-                    if process_uploaded_files(uploaded_files):
-                        st.session_state.processing_complete = True
-                        st.session_state.files_ready = False  # Reset files ready flag
-                        st.session_state.uploader_key += 1  # Reset uploader to allow new uploads
+            if process_clicked:
+                with process_button_placeholder:
+                    with st.status("Processing files...", expanded=False) as status:
+                        # Process files
+                        if process_uploaded_files(uploaded_files):
+                            st.session_state.processing_complete = True
+                            st.session_state.files_ready = False  # Reset files ready flag
+                            st.session_state.uploader_key += 1  # Reset uploader to allow new uploads
 
-                    status.update(label="Files processed successfully!", state="complete", expanded=False)
-                    # st.rerun()
+                        status.update(label="Files processed successfully!", state="complete", expanded=False)
 
-    # Display green checkbox when processing is complete
-    if st.session_state.processing_complete:
-        st.sidebar.success("✔️ Files processed and ready to use")
+        # Display green checkbox when processing is complete
+        if st.session_state.processing_complete:
+            st.sidebar.success("✔️ Files processed and ready to use")
 
 if __name__ == "__main__":
     main()
