@@ -474,7 +474,7 @@ def main():
     if "k_results" not in st.session_state:
         st.session_state.k_results = 3  # Default number of results to retrieve
     if "summarization_llm" not in st.session_state:
-        st.session_state.summarization_llm = "deepseek-r1:latest"  # Default summarization LLM
+        st.session_state.summarization_llm = "llama3.2"  # Default summarization LLM
     if "report_llm" not in st.session_state:
         st.session_state.report_llm = "deepseek-r1:latest"  # Default report writing LLM
 
@@ -483,7 +483,7 @@ def main():
 
     # Add Report LLM model selector to sidebar
     llm_models = ["deepseek-r1:latest", "deepseek-r1:70b", "qwq", "gemma3:27b", "mistral-small:latest", 
-                 "deepseek-r1:1.5b", "llama3.1:8b-instruct-q4_0", "llama3.2", "gemma3:4b", "phi4-mini", 
+                 "deepseek-r1:1.5b", "llama3.1:8b-instruct-q4_0", "llama3.2", "llama3.3","gemma3:4b", "phi4-mini", 
                  "mistral:instruct", "mistrallite"]
     
     st.sidebar.subheader("LLM Models")
@@ -493,7 +493,7 @@ def main():
         "Report Writing LLM",
         options=llm_models,
         index=llm_models.index(st.session_state.report_llm) if st.session_state.report_llm in llm_models else 0,
-        help="Choose the LLM model to use for final report generation"
+        help="Choose the LLM model to use for final report generation; good options: deepseek-r1:latest (fast), qwq or mistral-small:latest (medium), llama3.3 or deepseek-r1:70b (deep but slow)"
     )
     
     # Summarization LLM
@@ -501,7 +501,7 @@ def main():
         "Summarization LLM",
         options=llm_models,
         index=llm_models.index(st.session_state.summarization_llm) if st.session_state.summarization_llm in llm_models else 0,
-        help="Choose the LLM model to use for document summarization"
+        help="Choose the LLM model to use for document summarization; good options: llama3.2 (fast and accurate), qwq (deep but slow)"
     )
 
     # Add report structure selector to sidebar
