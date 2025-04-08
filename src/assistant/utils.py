@@ -36,6 +36,9 @@ class QualityCheckResult(BaseModel):
     improvement_needed: bool
     improvement_suggestions: str
 
+class DetectedLanguage(BaseModel):
+    language: str
+
 def parse_output(text):
     # First try to extract thinking part if it exists
     think_match = re.search(r'<think>(.*?)</think>', text, re.DOTALL)

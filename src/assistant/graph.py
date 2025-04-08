@@ -6,14 +6,37 @@ from langchain_core.runnables.config import RunnableConfig
 from src.assistant.configuration import Configuration
 from src.assistant.vector_db import get_or_create_vector_db, search_documents, get_embedding_model_path
 from src.assistant.state import ResearcherState, ResearcherStateInput, ResearcherStateOutput, QuerySearchState, QuerySearchStateInput, QuerySearchStateOutput, SummaryRanking
-from src.assistant.prompts import RESEARCH_QUERY_WRITER_PROMPT, RELEVANCE_EVALUATOR_PROMPT, SUMMARIZER_PROMPT, REPORT_WRITER_PROMPT, QUALITY_CHECKER_PROMPT
-from src.assistant.utils import format_documents_with_metadata, invoke_llm, invoke_ollama, parse_output, tavily_search, Evaluation, Queries, SummaryRankings, SummaryRelevance, QualityCheckResult
+from src.assistant.prompts import RESEARCH_QUERY_WRITER_PROMPT, RELEVANCE_EVALUATOR_PROMPT, SUMMARIZER_PROMPT, REPORT_WRITER_PROMPT, QUALITY_CHECKER_PROMPT, LANGUAGE_DETECTOR_PROMPT
+from src.assistant.utils import format_documents_with_metadata, invoke_llm, invoke_ollama, parse_output, tavily_search, Evaluation, Queries, SummaryRankings, SummaryRelevance, QualityCheckResult, DetectedLanguage
 import re
 import time
 
 # Number of query to process in parallel for each batch
 # Change depending on the performance of the system
 BATCH_SIZE = 3
+
+# Detect language of user query
+def detect_language(state: ResearcherState, config: RunnableConfig):
+    print("--- Detecting language of user query ---")
+    user_instructions = state["user_instructions"]
+    llm_model = config["configurable"].get("llm_model", "deepseek-r1:latest")
+    
+    language_detector_prompt = LANGUAGE_DETECTOR_PROMPT.format(
+        query=user_instructions
+    )
+    
+    # Using local model with Ollama
+    result = invoke_ollama(
+        model=llm_model,
+        system_prompt=language_detector_prompt,
+        user_prompt=f"Detect the language of this query: {user_instructions}",
+        output_format=DetectedLanguage
+    )
+    
+    detected_language = result.language
+    print(f"Detected language: {detected_language}")
+    
+    return {"detected_language": detected_language}
 
 # Display embedding model information
 def display_embedding_model_info(state: ResearcherState):
@@ -26,6 +49,7 @@ def display_embedding_model_info(state: ResearcherState):
 def generate_research_queries(state: ResearcherState, config: RunnableConfig):
     print("--- Generating research queries ---")
     user_instructions = state["user_instructions"]
+    detected_language = state["detected_language"]
     max_queries = config["configurable"].get("max_search_queries", 3)
     llm_model = config["configurable"].get("llm_model", "deepseek-r1:latest")
     
@@ -38,7 +62,7 @@ def generate_research_queries(state: ResearcherState, config: RunnableConfig):
     result = invoke_ollama(
         model=llm_model,
         system_prompt=query_writer_prompt,
-        user_prompt=f"Generate research queries for this user instruction: {user_instructions}",
+        user_prompt=f"Generate research queries for this user instruction in {detected_language} language: {user_instructions}",
         output_format=Queries
     )
     
@@ -77,10 +101,17 @@ def initiate_query_research(state: ResearcherState):
     current_position = state["current_position"]
     batch_end = min(current_position, len(queries))
     current_batch = queries[current_position - BATCH_SIZE:batch_end]
+    detected_language = state.get("detected_language", "en")
+    
+    # Get the quality check loops from the main config
+    quality_check_loops = state.get("quality_check_loops", 1)
 
-    # Return the batch of queries to process
+    # Return the batch of queries to process with detected language and quality_check_loops in config
     return [
-        Send("search_and_summarize_query", {"query": s})
+        Send("search_and_summarize_query", {"query": s, "configurable": {
+            "detected_language": detected_language,
+            "quality_check_loops": quality_check_loops
+        }})
         for s in current_batch
     ]
 
@@ -103,6 +134,8 @@ def evaluate_retrieved_documents(state: QuerySearchState, config: RunnableConfig
     query = state["query"]
     retrieved_documents = state["retrieved_documents"]
     llm_model = config["configurable"].get("llm_model", "deepseek-r1:latest")
+    detected_language = config["configurable"].get("detected_language", "en")
+    
     evaluation_prompt = RELEVANCE_EVALUATOR_PROMPT.format(
         query=query,
         documents=format_documents_with_metadata(retrieved_documents)
@@ -112,7 +145,7 @@ def evaluate_retrieved_documents(state: QuerySearchState, config: RunnableConfig
     evaluation = invoke_ollama(
         model=llm_model,
         system_prompt=evaluation_prompt,
-        user_prompt=f"Evaluate the relevance of the retrieved documents for this query: {query}",
+        user_prompt=f"Evaluate the relevance of the retrieved documents for this query in {detected_language} language: {query}",
         output_format=Evaluation
     )
     
@@ -159,6 +192,7 @@ def summarize_query_research(state: QuerySearchState, config: RunnableConfig):
     print("--- Summarizing query research ---")
     query = state["query"]
     llm_model = config["configurable"].get("llm_model", "deepseek-r1:latest")
+    detected_language = config["configurable"].get("detected_language", "en")
 
     information = None
     if state["are_documents_relevant"]:
@@ -182,7 +216,7 @@ def summarize_query_research(state: QuerySearchState, config: RunnableConfig):
     summary = invoke_ollama(
         model=llm_model,
         system_prompt=summary_prompt,
-        user_prompt=f"Extract and include relevant information from the documents that answers this query, preserving original wording: {query}"
+        user_prompt=f"Extract and include relevant information from the documents that answers this query in {detected_language} language, preserving original wording: {query}"
     )
     # Remove thinking part if present
     summary = parse_output(summary)["response"]
@@ -204,12 +238,283 @@ def route_after_summarization(state: QuerySearchState, config: RunnableConfig) -
         print("Quality checker is disabled, skipping quality check")
         return "__end__"
 
+def route_quality_check(state: QuerySearchState, config: RunnableConfig) -> Literal["improve_summary", "__end__"]:
+    """Route based on quality check results."""
+    quality_results = state.get("quality_check_results", {})
+    
+    # Check if improvement is needed based on the simplified quality metrics
+    improvement_needed = quality_results.get("improvement_needed", False)
+    quality_score = quality_results.get("quality_score", 0.7)
+    is_sufficient = quality_results.get("is_accurate", True) and quality_results.get("is_complete", True)
+    
+    # Get current improvement iteration for this specific document
+    iterations = state.get("summary_improvement_iterations", 0)
+    
+    # Get the maximum number of quality check loops from config
+    quality_check_loops = config["configurable"].get("quality_check_loops", 1)
+    
+    # Only improve if we haven't reached the maximum number of iterations for this document
+    if iterations < quality_check_loops:
+        print(f"Document '{state['query']}': Proceeding with summary improvement. Quality score: {quality_score}, Sufficient: {is_sufficient}")
+        print(f"Document '{state['query']}': Improvement iteration {iterations + 1}/{quality_check_loops}")
+        return "improve_summary"
+    else:
+        print(f"Document '{state['query']}': Reached maximum number of improvement iterations ({quality_check_loops}). Quality score: {quality_score}, Sufficient: {is_sufficient}")
+        return "__end__"
+
+def improve_summary(state: QuerySearchState, config: RunnableConfig):
+    """Improve the summary based on quality check feedback."""
+    print("--- Improving summary based on quality check ---")
+    query = state["query"]
+    original_summary = state.get("original_summary", state["search_summaries"][0])
+    current_summary = state["search_summaries"][0]
+    quality_check_results = state["quality_check_results"]
+    llm_model = config["configurable"].get("llm_model", "deepseek-r1:latest")
+    detected_language = config["configurable"].get("detected_language", "en")
+    
+    # Get current improvement iteration and increment it
+    iterations = state.get("summary_improvement_iterations", 0)
+    iterations += 1
+    
+    # Get the maximum number of quality check loops from config
+    quality_check_loops = config["configurable"].get("quality_check_loops", 1)
+    
+    print(f"Document '{query}': Improving summary (iteration {iterations}/{quality_check_loops})")
+    
+    # Get the information source used for the summary
+    information = None
+    if state["are_documents_relevant"]:
+        information = state["retrieved_documents"]
+    else:
+        information = state["web_search_results"]
+    
+    # Format the information
+    formatted_information = format_documents_with_metadata(information, preserve_original=True) if state["are_documents_relevant"] else information
+    
+    # Create a prompt for improving the summary
+    improvement_suggestions = quality_check_results.get("improvement_suggestions", "")
+    issues_found = quality_check_results.get("issues_found", [])
+    missing_elements = quality_check_results.get("missing_elements", [])
+    citation_issues = quality_check_results.get("citation_issues", [])
+    
+    # Format the issues as bullet points
+    formatted_issues = ""
+    if issues_found:
+        formatted_issues += "\nIssues found:\n" + "\n".join([f"- {issue}" for issue in issues_found])
+    if missing_elements:
+        formatted_issues += "\nMissing elements:\n" + "\n".join([f"- {element}" for element in missing_elements])
+    if citation_issues:
+        formatted_issues += "\nCitation issues:\n" + "\n".join([f"- {issue}" for issue in citation_issues])
+    
+    improvement_prompt = f"""
+    You are tasked with improving a summary based on quality check feedback. The summary should accurately reflect the information in the source documents and address the query.
+    
+    Query: {query}
+    
+    Current Summary:
+    {current_summary}
+    
+    Quality Check Feedback:
+    {improvement_suggestions}
+    {formatted_issues}
+    
+    Source Documents:
+    {formatted_information}
+    
+    Please provide an improved summary that addresses the feedback and better answers the query. Ensure that all information is accurate and properly cited.
+    """
+    
+    # Using local model with Ollama
+    improved_summary = invoke_ollama(
+        model=llm_model,
+        system_prompt="You are an expert summarizer. Improve the summary based on the feedback provided.",
+        user_prompt=f"Improve this summary in {detected_language} language based on the feedback: {improvement_prompt}"
+    )
+    
+    # Using external LLM providers with OpenRouter: GPT-4o, Claude, Deepseek R1,... 
+    # improved_summary = invoke_llm(
+    #     model='gpt-4o-mini',
+    #     system_prompt="You are an expert summarizer. Improve the summary based on the feedback provided.",
+    #     user_prompt=improvement_prompt
+    # )
+    
+    # Remove thinking part if present
+    improved_summary = parse_output(improved_summary)["response"]
+    
+    print(f"Document '{query}': Summary improved (iteration {iterations}/{quality_check_loops})")
+    
+    # Return the improved summary and the updated iteration count
+    return {
+        "search_summaries": [improved_summary],
+        "summary_improvement_iterations": iterations
+    }
+
+def filter_search_summaries(state: ResearcherState, config: RunnableConfig):
+    """Filter out irrelevant search summaries with a simpler approach"""
+    print("--- Filtering search summaries ---")
+    user_instructions = state["user_instructions"]
+    search_summaries = state.get("search_summaries", [])
+    llm_model = config["configurable"].get("llm_model", "deepseek-r1:latest")
+    detected_language = state.get("detected_language", "en")
+    
+    # If there are no summaries, return empty filtered summaries
+    if not search_summaries:
+        return {"filtered_summaries": []}
+    
+    # Keep track of filtered summaries
+    filtered_summaries = []
+    
+    # Process each summary
+    for summary in search_summaries:
+        # Skip empty summaries
+        if not summary or len(summary.strip()) < 50:
+            continue
+            
+        # Check if the summary contains phrases indicating no relevant information
+        irrelevance_indicators = [
+            "no relevant information",
+            "not relevant",
+            "irrelevant",
+            "no information",
+            "does not provide",
+            "doesn't provide",
+            "not related",
+            "no direct information"
+        ]
+        
+        # Check if the summary contains any irrelevance indicators
+        is_irrelevant = False
+        for indicator in irrelevance_indicators:
+            if indicator.lower() in summary.lower():
+                is_irrelevant = True
+                break
+                
+        # If the summary is not irrelevant, add it to filtered summaries
+        if not is_irrelevant:
+            filtered_summaries.append(summary)
+    
+    # If we have filtered out all summaries, include a placeholder
+    if not filtered_summaries:
+        placeholder = f"No relevant information was found for the query: {user_instructions}"
+        filtered_summaries = [placeholder]
+    
+    print(f"Filtered {len(search_summaries)} summaries to {len(filtered_summaries)} relevant ones")
+    
+    return {"filtered_summaries": filtered_summaries}
+
+def rank_search_summaries(state: ResearcherState, config: RunnableConfig):
+    """Simplified ranking of search summaries by relevance"""
+    print("--- Ranking search summaries ---")
+    user_instructions = state["user_instructions"]
+    filtered_summaries = state.get("filtered_summaries", [])
+    llm_model = config["configurable"].get("llm_model", "deepseek-r1:latest")
+    detected_language = state.get("detected_language", "en")
+    
+    # If there are no filtered summaries, return empty rankings
+    if not filtered_summaries or (len(filtered_summaries) == 1 and "No relevant information" in filtered_summaries[0]):
+        return {
+            "ranked_summaries": [],
+            "relevance_scores": []
+        }
+    
+    # If there's only one summary, return it as is
+    if len(filtered_summaries) == 1:
+        return {
+            "ranked_summaries": filtered_summaries,
+            "relevance_scores": [1.0]
+        }
+    
+    # For multiple summaries, use the LLM to rank them
+    ranking_prompt = f"""
+    Rank the following information summaries based on their relevance to the user's query. 
+    Assign a score from 0.0 to 1.0 for each summary, where 1.0 is most relevant.
+    
+    User Query: {user_instructions}
+    
+    Summaries to rank:
+    """
+    
+    # Add each summary to the prompt
+    for i, summary in enumerate(filtered_summaries):
+        ranking_prompt += f"\n\nSummary {i+1}:\n{summary}"
+    
+    ranking_prompt += "\n\nProvide your ranking as a JSON object with the following structure:"
+    ranking_prompt += "\n{\"rankings\": [{\"summary_index\": 0, \"relevance_score\": 0.9, \"justification\": \"reason\"}, ...]}"
+    ranking_prompt += "\nwhere 'summary_index' is the 0-based index of the summary."
+    
+    # Using local model with Ollama
+    try:
+        rankings = invoke_ollama(
+            model=llm_model,
+            system_prompt=ranking_prompt,
+            user_prompt=f"Rank these summaries in {detected_language} language based on their relevance to: {user_instructions}",
+            output_format=SummaryRankings
+        )
+        
+        # Sort the rankings by relevance score (descending)
+        sorted_rankings = sorted(rankings.rankings, key=lambda x: x.relevance_score, reverse=True)
+        
+        # Extract the ranked summaries and scores
+        ranked_summaries = [filtered_summaries[r.summary_index] for r in sorted_rankings]
+        relevance_scores = [r.relevance_score for r in sorted_rankings]
+        
+    except Exception as e:
+        print(f"Error ranking summaries: {str(e)}")
+        # If there's an error, use the original order
+        ranked_summaries = filtered_summaries
+        relevance_scores = [1.0] * len(filtered_summaries)
+    
+    return {
+        "ranked_summaries": ranked_summaries,
+        "relevance_scores": relevance_scores
+    }
+
+def generate_final_answer(state: ResearcherState, config: RunnableConfig):
+    print("--- Generating final answer ---")
+    user_instructions = state["user_instructions"]
+    ranked_summaries = state.get("ranked_summaries", [])
+    llm_model = config["configurable"].get("llm_model", "deepseek-r1:latest")
+    detected_language = state.get("detected_language", "en")
+    
+    # Determine report structure based on the query
+    report_structure = """
+    1. Introduction
+    2. Main Findings
+    3. Detailed Analysis
+    4. Conclusion
+    """
+    
+    # Combine the information from the ranked summaries
+    if ranked_summaries:
+        combined_information = "\n\n".join([summary for summary in ranked_summaries])
+    else:
+        combined_information = "No relevant information found."
+    
+    # Generate the final answer
+    report_prompt = REPORT_WRITER_PROMPT.format(
+        instruction=user_instructions,
+        report_structure=report_structure,
+        information=combined_information
+    )
+    
+    final_answer = invoke_ollama(
+        model=llm_model,
+        system_prompt=report_prompt,
+        user_prompt=f"Create a comprehensive report in {detected_language} language for: {user_instructions}"
+    )
+    
+    # Remove thinking part if present
+    final_answer = parse_output(final_answer)["response"]
+    
+    return {"final_answer": final_answer}
+
 def quality_check_summary(state: QuerySearchState, config: RunnableConfig):
     """Simple quality check to ensure the summary contains sufficient information."""
     print("--- Quality checking summary ---")
     query = state["query"]
     current_summary = state["search_summaries"][0]
     llm_model = config["configurable"].get("llm_model", "deepseek-r1:latest")
+    detected_language = config["configurable"].get("detected_language", "en")
     quality_check_loops = config["configurable"].get("quality_check_loops", 1)  # Get configured loop count
     
     # Get the source documents
@@ -231,292 +536,46 @@ def quality_check_summary(state: QuerySearchState, config: RunnableConfig):
         # Initialize quality check results
         quality_check = None
         
-        # Perform quality checks in a loop based on configured count
-        for i in range(quality_check_loops):
-            print(f"Quality check iteration {i+1}/{quality_check_loops}")
-            
-            # Using local model with Ollama
-            quality_check = invoke_ollama(
-                model=llm_model,
-                system_prompt=quality_prompt,
-                user_prompt=f"Evaluate if this summary contains sufficient information to answer the query: {query}",
-                output_format=QualityCheckResult
-            )
-            
-            # Log quality results
-            quality_score = quality_check.quality_score
-            is_sufficient = quality_check.is_sufficient
-            improvement_needed = quality_check.improvement_needed
-            
-            print(f"Summary quality score: {quality_score}")
-            print(f"Is summary sufficient: {is_sufficient}")
-            print(f"Improvement needed: {improvement_needed}")
-            
-            # If the quality is good enough, break the loop
-            if is_sufficient and not improvement_needed:
-                print(f"Quality check passed on iteration {i+1}, breaking loop")
-                break
-            
-            # If this is not the last iteration and improvement is needed, wait briefly
-            if i < quality_check_loops - 1 and improvement_needed:
-                print("Waiting before next quality check iteration...")
-                time.sleep(1)  # Brief pause between iterations
+        # Get current iteration for this document
+        iterations = state.get("summary_improvement_iterations", 0)
+        
+        # Perform quality check for this document
+        print(f"Document '{query}': Quality check iteration {iterations + 1}/{quality_check_loops}")
+        
+        # Using local model with Ollama
+        quality_check = invoke_ollama(
+            model=llm_model,
+            system_prompt=quality_prompt,
+            user_prompt=f"Evaluate the quality of this summary in {detected_language} language for the query: {query}",
+            output_format=QualityCheckResult
+        )
+        
+        # Log quality results
+        quality_score = quality_check.quality_score
+        is_sufficient = quality_check.is_accurate and quality_check.is_complete  # Determine if sufficient based on accuracy and completeness
+        improvement_needed = quality_check.improvement_needed
+        
+        print(f"Document '{query}': Summary quality score: {quality_score}")
+        print(f"Document '{query}': Is summary sufficient: {is_sufficient}")
+        print(f"Document '{query}': Improvement needed: {improvement_needed}")
         
         return {"quality_check_results": quality_check.dict()}
         
     except Exception as e:
-        print(f"Error during quality check: {str(e)}")
+        print(f"Error during quality check for document '{query}': {str(e)}")
         # Default quality check results in case of error
         default_results = {
             "quality_score": 0.7,  # Medium quality score
-            "is_sufficient": True,  # Assume sufficient to continue
-            "improvement_needed": False,  # Don't force improvement to avoid loops
+            "is_accurate": True,  # Assume accurate
+            "is_complete": True,  # Assume complete
+            "issues_found": [],
+            "missing_elements": [],
+            "citation_issues": [],
+            "improvement_needed": False,
             "improvement_suggestions": "No specific suggestions due to error in quality check."
         }
+        print(f"Document '{query}': Proceeding with summary improvement using quality feedback. Quality score: {default_results['quality_score']}, Sufficient: {default_results['is_accurate'] and default_results['is_complete']}")
         return {"quality_check_results": default_results}
-
-def route_quality_check(state: QuerySearchState) -> Literal["improve_summary", "__end__"]:
-    """Route based on quality check results."""
-    quality_results = state.get("quality_check_results", {})
-    
-    # Check if improvement is needed based on the simplified quality metrics
-    improvement_needed = quality_results.get("improvement_needed", False)
-    quality_score = quality_results.get("quality_score", 0.7)
-    is_sufficient = quality_results.get("is_sufficient", True)
-    
-    # Get current improvement iteration
-    iterations = state.get("summary_improvement_iterations", 0)
-    
-    # Only improve the summary once, regardless of quality metrics
-    if iterations == 0:
-        print(f"Proceeding with summary improvement using quality feedback. Quality score: {quality_score}, Sufficient: {is_sufficient}")
-        return "improve_summary"
-    else:
-        print(f"Summary has already been improved once, proceeding with current version. Quality score: {quality_score}, Sufficient: {is_sufficient}")
-        return "__end__"
-
-def improve_summary(state: QuerySearchState, config: RunnableConfig):
-    """Improve the summary based on quality check feedback."""
-    print("--- Improving summary with quality feedback ---")
-    query = state["query"]
-    llm_model = config["configurable"].get("llm_model", "deepseek-r1:latest")
-    current_summary = state["search_summaries"][0]
-    quality_results = state["quality_check_results"]
-    
-    # Get the source documents
-    information = None
-    if state["are_documents_relevant"]:
-        information = state["retrieved_documents"]
-    else:
-        information = state["web_search_results"]
-    
-    # Format documents with metadata but simplified
-    formatted_information = format_documents_with_metadata(information) if state["are_documents_relevant"] else information
-    
-    # Extract quality feedback
-    quality_score = quality_results.get("quality_score", 0.7)
-    is_sufficient = quality_results.get("is_sufficient", False)
-    improvement_suggestions = quality_results.get("improvement_suggestions", "")
-    
-    # Create an improved prompt that explicitly incorporates quality feedback
-    improvement_prompt = f"""Improve this summary by addressing the specific quality feedback provided.
-
-Original Query: {query}
-
-Current Summary:
-{current_summary}
-
-Source Documents:
-{formatted_information}
-
-Quality Feedback:
-- Quality Score: {quality_score}
-- Is sufficient: {'Yes' if is_sufficient else 'No'}
-- Improvement Suggestions: {improvement_suggestions}
-
-Your task is to create ONE improved version of the summary that:
-1. Addresses the specific improvement suggestions
-2. Extracts the most relevant information from the source documents
-3. Directly answers the original query
-4. Preserves original wording from the source documents where appropriate
-"""
-    
-    try:
-        # Generate improved summary incorporating quality feedback
-        improved_summary = invoke_ollama(
-            model=llm_model,
-            system_prompt=improvement_prompt,
-            user_prompt=f"Create ONE improved version of this summary based on the quality feedback provided."
-        )
-        # Remove thinking part if present
-        improved_summary = parse_output(improved_summary)["response"]
-            
-    except Exception as e:
-        print(f"Error generating improved summary: {str(e)}")
-        # If there's an error, keep the original summary
-        improved_summary = current_summary
-    
-    # Set iteration counter to 1 to indicate one improvement has been made
-    return {
-        "search_summaries": [improved_summary],
-        "summary_improvement_iterations": 1
-    }
-
-def filter_search_summaries(state: ResearcherState, config: RunnableConfig):
-    """Filter out irrelevant search summaries with a simpler approach"""
-    print("--- Filtering search summaries ---")
-    user_instructions = state["user_instructions"]
-    search_summaries = state["search_summaries"]
-    llm_model = config["configurable"].get("llm_model", "deepseek-r1:latest")
-    
-    # Skip empty or minimal summaries
-    valid_summaries = []
-    for summary in search_summaries:
-        if summary and len(summary.strip()) > 50:
-            valid_summaries.append(summary)
-    
-    # If all summaries were excluded, keep at least one with the most content
-    if not valid_summaries and search_summaries:
-        valid_summaries = [max(search_summaries, key=lambda s: len(s.strip()) if s else 0)]
-    
-    # Simple evaluation of relevance with minimal overhead
-    filtered_summaries = []
-    for summary in valid_summaries:
-        evaluation_prompt = f"""Determine if this summary is relevant to the original query.
-        
-Original Query: {user_instructions}
-
-Summary:
-{summary}
-
-Your output must only be a valid JSON object with keys "is_relevant" (boolean) and "confidence" (float 0-1).
-"""
-        
-        result = invoke_ollama(
-            model=llm_model,
-            system_prompt=evaluation_prompt,
-            user_prompt="Is this summary relevant to the original query?",
-            output_format=SummaryRelevance
-        )
-        
-        if result.is_relevant:
-            filtered_summaries.append(summary)
-    
-    # If all summaries were filtered out, keep the most relevant one
-    if not filtered_summaries and valid_summaries:
-        filtered_summaries = [valid_summaries[0]]
-    
-    return {"filtered_summaries": filtered_summaries}
-
-def rank_search_summaries(state: ResearcherState, config: RunnableConfig):
-    """Simplified ranking of search summaries by relevance"""
-    print("--- Ranking search summaries ---")
-    user_instructions = state["user_instructions"]
-    filtered_summaries = state["filtered_summaries"]
-    llm_model = config["configurable"].get("llm_model", "deepseek-r1:latest")
-    
-    # If we have only one summary, no need to rank
-    if len(filtered_summaries) <= 1:
-        return {
-            "ranked_summaries": filtered_summaries,
-            "relevance_scores": [1.0] if filtered_summaries else []
-        }
-    
-    ranked_results = []
-    
-    # For each filtered summary, calculate a simple relevance score
-    for i, summary in enumerate(filtered_summaries):
-        ranking_prompt = f"""Rate how relevant this information is to answering the query.
-
-Query: {user_instructions}
-
-Information:
-{summary}
-
-Your output must be a JSON object with keys "relevance_score" (float 0-1) and "justification" (brief explanation).
-"""
-        
-        try:
-            ranking = invoke_ollama(
-                model=llm_model,
-                system_prompt=ranking_prompt,
-                user_prompt="Rate the relevance of this information",
-                output_format=SummaryRanking
-            )
-            
-            ranked_results.append({
-                "summary_index": i,
-                "relevance_score": ranking.relevance_score,
-                "justification": ranking.justification
-            })
-            
-        except Exception as e:
-            print(f"Error ranking summary {i}: {str(e)}")
-            # Assign a default middle score
-            ranked_results.append({
-                "summary_index": i,
-                "relevance_score": 0.5,
-                "justification": "Ranking failed - assigned default score"
-            })
-    
-    # Sort by relevance score, highest first
-    ranked_results.sort(key=lambda x: x["relevance_score"], reverse=True)
-    
-    # Prepare the ranked summaries and scores
-    ranked_summaries = [filtered_summaries[result["summary_index"]] for result in ranked_results]
-    relevance_scores = [result["relevance_score"] for result in ranked_results]
-    
-    return {
-        "ranked_summaries": ranked_summaries,
-        "relevance_scores": relevance_scores
-    }
-
-def generate_final_answer(state: ResearcherState, config: RunnableConfig):
-    """Generate the final answer using relevant information from ranked summaries"""
-    print("--- Generating final answer ---")
-    user_instructions = state["user_instructions"]
-    ranked_summaries = state.get("ranked_summaries", [])
-    relevance_scores = state.get("relevance_scores", [])
-    llm_model = config["configurable"].get("llm_model", "deepseek-r1:latest")
-    
-    # Get report structure configuration
-    report_structure_file = config["configurable"].get("report_structure_file", "./report_structures/standard report.md")
-    try:
-        with open(report_structure_file, "r") as f:
-            report_structure = f.read()
-    except Exception as e:
-        print(f"Error reading report structure file: {str(e)}")
-        report_structure = "# Report\n\n## Summary\n\n## Key Findings\n\n## Conclusion"
-    
-    # Combine all relevant information from ranked summaries
-    combined_information = ""
-    
-    if ranked_summaries:
-        # Include all ranked summaries, sorted by relevance
-        for i, (summary, score) in enumerate(zip(ranked_summaries, relevance_scores)):
-            # Only include if it has a reasonable amount of content
-            if summary and len(summary.strip()) > 50:
-                combined_information += f"\n\n--- Information {i+1} (Relevance Score: {score}) ---\n\n{summary}"
-    else:
-        combined_information = "No relevant information found."
-    
-    # Generate the final answer
-    report_prompt = REPORT_WRITER_PROMPT.format(
-        instruction=user_instructions,
-        report_structure=report_structure,
-        information=combined_information
-    )
-    
-    final_answer = invoke_ollama(
-        model=llm_model,
-        system_prompt=report_prompt,
-        user_prompt=f"Create a comprehensive report for: {user_instructions}"
-    )
-    
-    # Remove thinking part if present
-    final_answer = parse_output(final_answer)["response"]
-    
-    return {"final_answer": final_answer}
 
 # Create subghraph for searching each query
 query_search_subgraph = StateGraph(QuerySearchState, input=QuerySearchStateInput, output=QuerySearchStateOutput)
@@ -543,6 +602,7 @@ researcher_graph = StateGraph(ResearcherState, input=ResearcherStateInput, outpu
 
 # Define main researcher nodes
 researcher_graph.add_node(display_embedding_model_info)
+researcher_graph.add_node(detect_language)
 researcher_graph.add_node(generate_research_queries)
 researcher_graph.add_node(search_queries)
 researcher_graph.add_node("search_and_summarize_query", query_search_subgraph.compile())
@@ -552,7 +612,8 @@ researcher_graph.add_node(generate_final_answer)
 
 # Define transitions for the main graph
 researcher_graph.add_edge(START, "display_embedding_model_info")
-researcher_graph.add_edge("display_embedding_model_info", "generate_research_queries")
+researcher_graph.add_edge("display_embedding_model_info", "detect_language")
+researcher_graph.add_edge("detect_language", "generate_research_queries")
 researcher_graph.add_edge("generate_research_queries", "search_queries")
 researcher_graph.add_conditional_edges("search_queries", initiate_query_research, ["search_and_summarize_query"])
 researcher_graph.add_conditional_edges("search_and_summarize_query", check_more_queries, ["search_queries", "filter_search_summaries"])

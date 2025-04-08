@@ -11,6 +11,7 @@ class ResearcherState(TypedDict):
     relevance_scores: list
     current_position: int
     final_answer: str
+    detected_language: str  # Added field to store detected language
 
 class ResearcherStateInput(TypedDict):
     user_instructions: str

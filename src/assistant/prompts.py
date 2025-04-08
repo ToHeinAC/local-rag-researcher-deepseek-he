@@ -84,11 +84,18 @@ When evaluating the summary, check for:
 3. Proper references to specific sections or paragraphs when applicable
 4. Precise quotations for key definitions and important statements
 5. Exact values, ranges, percentages, or measurements for numerical data
+6. Score between 0 and 1, where 1 is perfect and 0 is the worst possible score; the score is based on the above criteria
+7. In case the Score is above 0.7, the summary is considered accurate and complete and no further improvements are needed.
+8. In case the Score is below 0.7, the summary is considered insufficient and needs improvement.
 
 Respond with a valid JSON object with the following structure:
 {{
-  "quality_score": 0.8,
-  "is_sufficient": true,
+  "quality_score": 0.9,
+  "is_accurate": true,
+  "is_complete": true,
+  "issues_found": [],
+  "missing_elements": [],
+  "citation_issues": [],
   "improvement_needed": false,
   "improvement_suggestions": ""
 }}
@@ -109,7 +116,7 @@ Information from research:
 1. Use only the information provided from the information from research- do not add external information
 2. Structure the report according to the provided template
 3. Focus on answering the user's query clearly and concisely
-4. Use proper citations to the source documents in the format [source], e.g. [source_filename.pdf]
+4. For citations, ALWAYS use the EXACT format [Source_filename] after each fact.
 5. Preserve original wording and literal information from the research whenever possible
 6. If the information is insufficient to answer parts of the query, state this explicitly
 7. Include exact levels, figures, numbers, statistics, and quantitative data ONLY from the source material
@@ -117,4 +124,16 @@ Information from research:
 9. Maintain precision by using direct quotes for key definitions and important statements
 10. For numerical data, always include the exact values, ranges, percentages, or measurements from the sources
 11. Clearly attribute information to specific sources when multiple sources are used
+"""
+
+
+LANGUAGE_DETECTOR_PROMPT = """Detect the language of the user's query. Respond with a valid JSON object with a single key 'language' containing the language code (e.g., 'en' for English, 'de' for German, 'fr' for French, etc.).
+
+Your output must only be a valid JSON object with a single key 'language':
+{{'language': 'language_code'}}
+
+# USER QUERY:
+{query}
+
+Detect the language and return the appropriate language code. If you can't determine the language with confidence, default to 'en' for English.
 """

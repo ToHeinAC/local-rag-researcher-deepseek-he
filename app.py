@@ -69,33 +69,35 @@ def generate_workflow_visualization():
     mermaid_code = "graph TD\n"
     
     # Add nodes
-    mermaid_code += "  A[Generate Research Queries] --> B[Search Queries]\n"
-    mermaid_code += "  B --> C[Search & Summarize Query]\n"
-    mermaid_code += "  C -->|More Queries| B\n"
-    mermaid_code += "  C -->|No More Queries| D[Filter Search Summaries]\n"
-    mermaid_code += "  D --> E[Rank Search Summaries]\n"
-    mermaid_code += "  E --> F[Generate Final Answer]\n"
+    mermaid_code += "  A[Display Embedding Model] --> B[Detect Language]\n"
+    mermaid_code += "  B --> C[Generate Research Queries]\n"
+    mermaid_code += "  C --> D[Search Queries]\n"
+    mermaid_code += "  D --> E[Search & Summarize Query]\n"
+    mermaid_code += "  E -->|More Queries| D\n"
+    mermaid_code += "  E -->|No More Queries| F[Filter Search Summaries]\n"
+    mermaid_code += "  F --> G[Rank Search Summaries]\n"
+    mermaid_code += "  G --> H[Generate Final Answer]\n"
     
     # Add subgraph for Search & Summarize Query with clear quality check connection
     mermaid_code += "  subgraph Search & Summarize Query\n"
-    mermaid_code += "    C1[Retrieve RAG Documents] --> C2[Evaluate Documents]\n"
-    mermaid_code += "    C2 -->|Relevant| C4[Summarize Research]\n"
-    mermaid_code += "    C2 -->|Not Relevant| C3[Web Research]\n"
-    mermaid_code += "    C3 --> C4\n"
+    mermaid_code += "    E1[Retrieve RAG Documents] --> E2[Evaluate Documents]\n"
+    mermaid_code += "    E2 -->|Relevant| E4[Summarize Research]\n"
+    mermaid_code += "    E2 -->|Not Relevant| E3[Web Research]\n"
+    mermaid_code += "    E3 --> E4\n"
     
     # Quality check process with loops
     mermaid_code += "    subgraph Quality Check Process\n"
-    mermaid_code += "      C5{Quality Check Enabled?}\n"
-    mermaid_code += "      C6[Quality Check]\n"
-    mermaid_code += "      C7[Improve Summary]\n"
-    mermaid_code += "      C5 -->|Yes| C6\n"
-    mermaid_code += "      C6 -->|Needs Improvement & Loops Remaining| C7\n"
-    mermaid_code += "      C7 --> C6\n"
+    mermaid_code += "      E5{Quality Check Enabled?}\n"
+    mermaid_code += "      E6[Quality Check]\n"
+    mermaid_code += "      E7[Improve Summary]\n"
+    mermaid_code += "      E5 -->|Yes| E6\n"
+    mermaid_code += "      E6 -->|Needs Improvement & Loops Remaining| E7\n"
+    mermaid_code += "      E7 --> E6\n"
     mermaid_code += "    end\n"
     
-    mermaid_code += "    C4 --> C5\n"
-    mermaid_code += "    C5 -->|No| C8[Return Summary]\n"
-    mermaid_code += "    C6 -->|Sufficient or No Loops Remaining| C8\n"
+    mermaid_code += "    E4 --> E5\n"
+    mermaid_code += "    E5 -->|No| E8[Return Summary]\n"
+    mermaid_code += "    E6 -->|Sufficient or No Loops Remaining| E8\n"
     mermaid_code += "  end\n"
     
     return mermaid_code
@@ -116,6 +118,7 @@ def generate_langgraph_visualization():
         main_nodes = [
             "START",
             "display_embedding_model_info",
+            "detect_language",
             "generate_research_queries",
             "search_queries",
             "search_and_summarize_query",
@@ -146,7 +149,8 @@ def generate_langgraph_visualization():
         # Define main workflow edges
         main_edges = [
             ("START", "display_embedding_model_info"),
-            ("display_embedding_model_info", "generate_research_queries"),
+            ("display_embedding_model_info", "detect_language"),
+            ("detect_language", "generate_research_queries"),
             ("generate_research_queries", "search_queries"),
             ("search_queries", "search_and_summarize_query"),
             ("search_and_summarize_query", "search_queries"),
@@ -249,6 +253,7 @@ def generate_response(user_input, enable_web_search, report_structure, max_searc
     # Initialize state for the researcher
     initial_state = {
         "user_instructions": user_input,
+        "quality_check_loops": quality_check_loops  # Add quality_check_loops to the initial state
     }
     
     # Langgraph researcher config
