@@ -102,96 +102,140 @@ def generate_workflow_visualization():
 
 def generate_langgraph_visualization():
     """
-    Generate a visualization directly from the langgraph workflow using networkx
+    Generate a visualization of the LangGraph workflow using NetworkX
     """
     try:
-        # For newer versions of langgraph that support direct visualization
-        if hasattr(researcher_graph, 'get_graph'):
-            graph_viz = researcher_graph.get_graph(xray=True)
-            png_data = graph_viz.draw_mermaid_png()
-            
-            # Save the PNG to a temporary file
-            temp_file_path = "langgraph_workflow.png"
-            with open(temp_file_path, "wb") as file:
-                file.write(png_data)
-            
-            return temp_file_path
-        # For older versions, we'll use the internal graph representation
-        else:
-            # Create a NetworkX graph from the langgraph structure
-            import networkx as nx
-            import matplotlib.pyplot as plt
-            
-            G = nx.DiGraph()
-            
-            # Add nodes and edges based on the researcher_graph structure
-            # These are the main nodes in our workflow
-            nodes = [
-                "START", 
-                "generate_research_queries", 
-                "search_queries",
-                "search_and_summarize_query", 
-                "filter_search_summaries", 
-                "rank_search_summaries", 
-                "generate_final_answer",
-                "END"
-            ]
-            
-            # Add edges based on the graph structure defined in graph.py
-            edges = [
-                ("START", "generate_research_queries"),
-                ("generate_research_queries", "search_queries"),
-                ("search_queries", "search_and_summarize_query"),
-                ("search_and_summarize_query", "search_queries"),  # More queries
-                ("search_and_summarize_query", "filter_search_summaries"),  # No more queries
-                ("filter_search_summaries", "rank_search_summaries"),
-                ("rank_search_summaries", "generate_final_answer"),
-                ("generate_final_answer", "END")
-            ]
-            
-            # Add all nodes and edges to the graph
-            G.add_nodes_from(nodes)
-            G.add_edges_from(edges)
-            
-            # Create a figure
-            plt.figure(figsize=(12, 8))
-            
-            # Use a hierarchical layout for a cleaner look
-            pos = nx.spring_layout(G, seed=42)
-            
-            # Draw the graph
-            nx.draw_networkx(
-                G, pos,
-                node_color='lightblue',
-                node_size=2000,
-                font_size=10,
-                font_weight='bold',
-                arrows=True,
-                arrowsize=20,
-                edge_color='gray'
-            )
-            
-            # Add edge labels for conditional transitions
-            edge_labels = {
-                ("search_and_summarize_query", "search_queries"): "More Queries",
-                ("search_and_summarize_query", "filter_search_summaries"): "No More Queries",
-            }
-            nx.draw_networkx_edge_labels(G, pos, edge_labels=edge_labels, font_size=8)
-            
-            # Add a note about quality check loops
-            plt.figtext(0.5, 0.01, f"Note: Quality check can run multiple loops based on configuration", 
-                       ha="center", fontsize=10, bbox={"facecolor":"lightgray", "alpha":0.5, "pad":5})
-            
-            # Save the figure to a file
-            temp_file_path = "langgraph_workflow.png"
-            plt.tight_layout()
-            plt.savefig(temp_file_path, dpi=100, bbox_inches='tight')
-            plt.close()
-            
-            return temp_file_path
+        import networkx as nx
+        import matplotlib.pyplot as plt
+        from matplotlib.patches import FancyBboxPatch
+        
+        # Create a directed graph
+        G = nx.DiGraph()
+        
+        # Define the main workflow nodes
+        main_nodes = [
+            "START",
+            "display_embedding_model_info",
+            "generate_research_queries",
+            "search_queries",
+            "search_and_summarize_query",
+            "filter_search_summaries",
+            "rank_search_summaries",
+            "generate_final_answer",
+            "END"
+        ]
+        
+        # Add main nodes to the graph
+        for node in main_nodes:
+            G.add_node(node, type="main")
+        
+        # Define the subgraph nodes for query search
+        subgraph_nodes = [
+            "retrieve_rag_documents",
+            "evaluate_retrieved_documents",
+            "web_research",
+            "summarize_query_research",
+            "quality_check_summary",
+            "improve_summary"
+        ]
+        
+        # Add subgraph nodes to the graph
+        for node in subgraph_nodes:
+            G.add_node(node, type="subgraph")
+        
+        # Define main workflow edges
+        main_edges = [
+            ("START", "display_embedding_model_info"),
+            ("display_embedding_model_info", "generate_research_queries"),
+            ("generate_research_queries", "search_queries"),
+            ("search_queries", "search_and_summarize_query"),
+            ("search_and_summarize_query", "search_queries"),
+            ("search_and_summarize_query", "filter_search_summaries"),
+            ("filter_search_summaries", "rank_search_summaries"),
+            ("rank_search_summaries", "generate_final_answer"),
+            ("generate_final_answer", "END")
+        ]
+        
+        # Add main edges to the graph
+        G.add_edges_from(main_edges)
+        
+        # Define subgraph edges
+        subgraph_edges = [
+            ("retrieve_rag_documents", "evaluate_retrieved_documents"),
+            ("evaluate_retrieved_documents", "web_research"),
+            ("evaluate_retrieved_documents", "summarize_query_research"),
+            ("web_research", "summarize_query_research"),
+            ("summarize_query_research", "quality_check_summary"),
+            ("quality_check_summary", "improve_summary"),
+            ("improve_summary", "quality_check_summary")
+        ]
+        
+        # Create a figure with two subplots - one for main workflow and one for subgraph
+        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 16), height_ratios=[1, 1])
+        
+        # Create a subgraph for the main workflow
+        main_graph = G.subgraph(main_nodes)
+        
+        # Position nodes for main workflow
+        main_pos = nx.spring_layout(main_graph, seed=42)
+        
+        # Draw main workflow
+        nx.draw_networkx_nodes(main_graph, main_pos, ax=ax1, node_color='lightblue', node_size=2000)
+        nx.draw_networkx_labels(main_graph, main_pos, ax=ax1, font_size=10, font_weight='bold')
+        nx.draw_networkx_edges(main_graph, main_pos, ax=ax1, arrows=True, arrowsize=20, edge_color='gray')
+        
+        # Add edge labels for conditional transitions in main workflow
+        main_edge_labels = {
+            ("search_and_summarize_query", "search_queries"): "More Queries",
+            ("search_and_summarize_query", "filter_search_summaries"): "No More Queries"
+        }
+        nx.draw_networkx_edge_labels(main_graph, main_pos, edge_labels=main_edge_labels, ax=ax1, font_size=8)
+        
+        # Create a subgraph for the query search
+        query_graph = G.subgraph(subgraph_nodes)
+        
+        # Position nodes for query search subgraph
+        query_pos = nx.spring_layout(query_graph, seed=42)
+        
+        # Draw query search subgraph
+        nx.draw_networkx_nodes(query_graph, query_pos, ax=ax2, node_color='lightgreen', node_size=2000)
+        nx.draw_networkx_labels(query_graph, query_pos, ax=ax2, font_size=10, font_weight='bold')
+        nx.draw_networkx_edges(query_graph, query_pos, ax=ax2, arrows=True, arrowsize=20, edge_color='gray')
+        
+        # Add edge labels for conditional transitions in query search subgraph
+        query_edge_labels = {
+            ("evaluate_retrieved_documents", "web_research"): "Not Relevant",
+            ("evaluate_retrieved_documents", "summarize_query_research"): "Relevant",
+            ("quality_check_summary", "improve_summary"): "Needs Improvement"
+        }
+        nx.draw_networkx_edge_labels(query_graph, query_pos, edge_labels=query_edge_labels, ax=ax2, font_size=8)
+        
+        # Set titles for subplots
+        ax1.set_title("Main LangGraph Workflow", fontsize=14, fontweight='bold')
+        ax2.set_title("Query Search Subgraph", fontsize=14, fontweight='bold')
+        
+        # Remove axis
+        ax1.axis('off')
+        ax2.axis('off')
+        
+        # Add embedding model info
+        from src.assistant.configuration import Configuration
+        config = Configuration()
+        embedding_model = config.embedding_model
+        plt.figtext(0.5, 0.98, f"Embedding Model: {embedding_model}", ha="center", fontsize=12, 
+                   bbox={"facecolor":"lightgray", "alpha":0.5, "pad":5})
+        
+        # Save the figure
+        plt.tight_layout()
+        temp_file_path = "langgraph_workflow.png"
+        plt.savefig(temp_file_path, dpi=100, bbox_inches='tight')
+        plt.close()
+        
+        return temp_file_path
     except Exception as e:
         # If visualization fails, return the error
-        raise Exception(f"Error generating visualization: {str(e)}")
+        st.error(f"Error generating visualization: {str(e)}")
+        return None
 
 def generate_response(user_input, enable_web_search, report_structure, max_search_queries, report_llm, enable_quality_checker, quality_check_loops=1, use_ext_database=False, selected_database=None, k_results=3):
     """
