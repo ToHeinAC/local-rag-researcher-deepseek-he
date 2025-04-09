@@ -36,7 +36,7 @@ def clean_(text):
     text = text.lower()
     
     # Remove unwanted characters but preserve . , : § $ % &
-    text = re.sub(r'[^a-zA-Z0-9\s.,:§$%&€@-µ²³]', '', text)
+    text = re.sub(r'[^a-zA-Z0-9\s.,:§$%&€@-µ²³üöäß]', '', text)
     
     # Remove extra whitespace
     text = re.sub(r'\s+', ' ', text).strip()

@@ -266,6 +266,7 @@ def generate_response(user_input, enable_web_search, report_structure, max_searc
         "summarization_llm": st.session_state.summarization_llm,  # Specific LLM for summarization
         "enable_quality_checker": enable_quality_checker,
         "quality_check_loops": quality_check_loops,
+        "k_results": k_results,  # Number of results to retrieve for each query
     }}
 
     # Start timing the workflow

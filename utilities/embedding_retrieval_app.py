@@ -179,7 +179,8 @@ with tab2:
                     vdbdir=vdb_full_path,
                     embed_llm=embed_model,
                     c_size=chunk_size,
-                    c_overlap=chunk_overlap
+                    c_overlap=chunk_overlap,
+                    #clean=False
                 )
                 
                 # Store the results in session state

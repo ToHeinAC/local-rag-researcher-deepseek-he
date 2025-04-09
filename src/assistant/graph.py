@@ -99,7 +99,7 @@ def check_more_queries(state: ResearcherState) -> Literal["search_queries", "fil
         return "search_queries"
     return "filter_search_summaries"
 
-def initiate_query_research(state: ResearcherState):
+def initiate_query_research(state: ResearcherState, config: RunnableConfig):
     # Get the next batch of queries
     queries = state["research_queries"]
     current_position = state["current_position"]
@@ -111,9 +111,12 @@ def initiate_query_research(state: ResearcherState):
     quality_check_loops = state.get("quality_check_loops", 1)
     
     # Get the LLM models from state if available
-    llm_model = state.get("llm_model", "deepseek-r1:latest")
+    llm_model = state.get("llm_model", "llama3.2")
     summarization_llm = state.get("summarization_llm", "llama3.2")
     report_llm = state.get("report_llm", "deepseek-r1:latest")
+    
+    # Get the number of results to retrieve from config
+    k_results = config["configurable"].get("k_results", 3)  # Default to 3 if not specified
 
     # Return the batch of queries to process with detected language and quality_check_loops in config
     return [
@@ -125,26 +128,31 @@ def initiate_query_research(state: ResearcherState):
                 "quality_check_loops": quality_check_loops,
                 "llm_model": llm_model,
                 "summarization_llm": summarization_llm,
-                "report_llm": report_llm
+                "report_llm": report_llm,
+                "k_results": k_results  # Pass the k_results to the subgraph
             }
         })
         for s in current_batch
     ]
 
-def retrieve_rag_documents(state: QuerySearchState):
+def retrieve_rag_documents(state: QuerySearchState, config: RunnableConfig):
     """Retrieve documents from the RAG database."""
     print("--- Retrieving documents ---")
     query = state["query"]
     detected_language = state.get("detected_language", "en")
     
+    # Get the number of results to retrieve from config
+    k_results = config["configurable"].get("k_results", 3)  # Default to 3 if not specified
+    
     # Display embedding model information for this retrieval operation
-    config = Configuration()
-    embedding_model = config.embedding_model
+    config_obj = Configuration()
+    embedding_model = config_obj.embedding_model
     print(f"  [Using embedding model for retrieval: {embedding_model}]")
     print(f"  [Using language: {detected_language}]")
+    print(f"  [Retrieving {k_results} results per query]")
     
-    # Use the new search_documents function from vector_db.py
-    documents = search_documents(query, k=3)
+    # Use the new search_documents function from vector_db.py with user-specified k
+    documents = search_documents(query, k=k_results)
     
     return {"retrieved_documents": documents, "detected_language": detected_language}
 
@@ -505,7 +513,13 @@ def rank_search_summaries(state: ResearcherState, config: RunnableConfig):
 def generate_final_answer(state: ResearcherState, config: RunnableConfig):
     print("--- Generating final answer ---")
     user_instructions = state["user_instructions"]
+    
+    # Get ranked summaries from state, ensuring we have a valid list even if it's missing
     ranked_summaries = state.get("ranked_summaries", [])
+    
+    # Debug information to help diagnose issues
+    print(f"  [Number of ranked summaries available: {len(ranked_summaries)}]")
+    
     # Use the report writing LLM model instead of the general purpose LLM model
     report_llm = config["configurable"].get("report_llm", "deepseek-r1:latest")
     detected_language = state.get("detected_language", "en")
@@ -521,11 +535,32 @@ def generate_final_answer(state: ResearcherState, config: RunnableConfig):
     """
     
     # Combine the information from the ranked summaries
-    if ranked_summaries:
+    if ranked_summaries and len(ranked_summaries) > 0:
         combined_information = "\n\n".join([summary for summary in ranked_summaries])
+        print(f"  [Combined information length: {len(combined_information)} characters]")
     else:
-        combined_information = f"No relevant information was found for the query: {user_instructions}"
+        # If no ranked summaries, try to get filtered summaries as a fallback
+        filtered_summaries = state.get("filtered_summaries", [])
+        if filtered_summaries and len(filtered_summaries) > 0:
+            print(f"  [No ranked summaries found, using {len(filtered_summaries)} filtered summaries as fallback]")
+            combined_information = "\n\n".join([summary for summary in filtered_summaries])
+        else:
+            # If no filtered summaries either, try to get raw search summaries as a last resort
+            search_summaries = state.get("search_summaries", [])
+            if search_summaries and len(search_summaries) > 0:
+                print(f"  [No ranked or filtered summaries found, using {len(search_summaries)} raw search summaries as fallback]")
+                combined_information = "\n\n".join([summary for summary in search_summaries])
+            else:
+                print("  [WARNING: No summaries found at all!]")
+                combined_information = f"No relevant information was found for the query: {user_instructions}"
     
+    # Print a sample of the combined information to help with debugging
+    if len(combined_information) > 200:
+        print(f"  [Sample of combined information: {combined_information[:200]}...]")
+    else:
+        print(f"  [Full combined information: {combined_information}]")
+        
+    # Format the report prompt
     report_prompt = REPORT_WRITER_PROMPT.format(
         instruction=user_instructions,
         report_structure=report_structure,
@@ -533,10 +568,34 @@ def generate_final_answer(state: ResearcherState, config: RunnableConfig):
         language=detected_language
     )
     
+    # Use a more specific system prompt and put the content in the user prompt
+    system_prompt = "You are an expert report writer. Your task is to create a comprehensive report based ONLY on the information provided. Do not add any external knowledge or opinions."
+    
+    user_prompt = f"""
+    Create a comprehensive and deep report based on the following information.
+    
+    User instruction: {user_instructions}
+    
+    Report structure to follow:
+    {report_structure}
+    
+    Information from research (use ONLY this information, do not add any external knowledge):
+    {combined_information}
+    
+    IMPORTANT REQUIREMENTS:
+    1. Use ONLY the information provided above. DO NOT add any external knowledge or personal opinions.
+    2. Structure the report according to the provided template.
+    3. For citations, use the format [Source_filename] after each fact.
+    4. Include exact figures, numbers, and statistics ONLY from the provided information.
+    5. Use direct quotes for key definitions and important statements.
+    6. Write in {detected_language} language.
+    """
+    
+    # Call the LLM with the improved prompts
     final_answer = invoke_ollama(
         model=report_llm,
-        system_prompt=report_prompt,
-        user_prompt=f"Create a comprehensive report in {detected_language} language for: {user_instructions}"
+        system_prompt=system_prompt,
+        user_prompt=user_prompt
     )
     
     # Remove thinking part if present

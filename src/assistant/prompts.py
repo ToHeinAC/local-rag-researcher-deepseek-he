@@ -87,7 +87,7 @@ When evaluating the summary, check for:
 1. Accuracy and completeness of information
 2. Mandatory inclusion of exact levels, figures, numbers, statistics, and quantitative data ONLY from the original Source Documents
 3. Proper references to specific sections or paragraphs when applicable
-4. Precise quotations for key definitions and important statements
+4. Precise quotations for key definitions and important statements. For citations, ALWAYS use the EXACT format [Source_filename] after each fact.
 5. Exact values, ranges, percentages, or measurements for numerical data
 6. Score between 0 and 10, where 10 is perfect and 0 is the worst possible score; the score is based on the above criteria
 7. In case the Score is above 7, the summary is considered accurate and complete and no further improvements are needed.
@@ -114,11 +114,11 @@ User instruction: {instruction}
 Use the following report structure:
 {report_structure}
 
-Information from research:
+Information (i.e. the content from the full retrieval process) from research:
 {information}
 
 **Key requirements**:
-1. Use only the information provided from the information from research- do not add external information or personal opinions
+1. You MUST NOT add llm knowledge in the report. Use ONLY the "Information", i.e. the content from the full retrieval process and the 
 2. Do not give any prefix or suffix to the report, just your deep report without any thinking passages.
 3. Structure the report according to the provided template
 4. Focus on answering the user's query clearly and concisely
