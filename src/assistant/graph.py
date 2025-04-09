@@ -41,7 +41,8 @@ def detect_language(state: ResearcherState, config: RunnableConfig):
 # Display embedding model information
 def display_embedding_model_info(state: ResearcherState):
     """Display information about which embedding model is being used."""
-    config = Configuration()
+    from src.assistant.configuration import get_config_instance
+    config = get_config_instance()
     embedding_model = config.embedding_model
     print(f"\n=== Using embedding model: {embedding_model} ===\n")
     return {}
@@ -108,6 +109,11 @@ def initiate_query_research(state: ResearcherState):
     
     # Get the quality check loops from the main config
     quality_check_loops = state.get("quality_check_loops", 1)
+    
+    # Get the LLM models from state if available
+    llm_model = state.get("llm_model", "deepseek-r1:latest")
+    summarization_llm = state.get("summarization_llm", "llama3.2")
+    report_llm = state.get("report_llm", "deepseek-r1:latest")
 
     # Return the batch of queries to process with detected language and quality_check_loops in config
     return [
@@ -116,7 +122,10 @@ def initiate_query_research(state: ResearcherState):
             "detected_language": detected_language,  # Pass language directly to the state
             "configurable": {
                 "detected_language": detected_language,
-                "quality_check_loops": quality_check_loops
+                "quality_check_loops": quality_check_loops,
+                "llm_model": llm_model,
+                "summarization_llm": summarization_llm,
+                "report_llm": report_llm
             }
         })
         for s in current_batch
@@ -205,9 +214,11 @@ def web_research(state: QuerySearchState):
 def summarize_query_research(state: QuerySearchState, config: RunnableConfig):
     print("--- Summarizing query research ---")
     query = state["query"]
-    llm_model = config["configurable"].get("llm_model", "deepseek-r1:latest")
+    # Use the summarization LLM model instead of the general purpose LLM model
+    summarization_llm = config["configurable"].get("summarization_llm", "llama3.2")
     detected_language = state.get("detected_language", config["configurable"].get("detected_language", "en"))
     print(f"  [Using language: {detected_language}]")
+    print(f"  [Using summarization LLM: {summarization_llm}]")
 
     information = None
     if state["are_documents_relevant"]:
@@ -228,9 +239,9 @@ def summarize_query_research(state: QuerySearchState, config: RunnableConfig):
         language=detected_language
     )
     
-    # Using local model with Ollama
+    # Using the configured summarization LLM model with Ollama
     summary = invoke_ollama(
-        model=llm_model,
+        model=summarization_llm,
         system_prompt=summary_prompt,
         user_prompt=f"Extract and include relevant information from the documents that answers this query in {detected_language} language, preserving original wording: {query}"
     )
@@ -448,7 +459,7 @@ def rank_search_summaries(state: ResearcherState, config: RunnableConfig):
     # For multiple summaries, use the LLM to rank them
     ranking_prompt = f"""
     Rank the following information summaries based on their relevance to the user's query. 
-    Assign a score from 0.0 to 1.0 for each summary, where 1.0 is most relevant.
+    Assign a score from 10 for each summary, where 10 is most relevant.
     Use the following language: {detected_language}
     
     User Query: {user_instructions}
@@ -495,9 +506,11 @@ def generate_final_answer(state: ResearcherState, config: RunnableConfig):
     print("--- Generating final answer ---")
     user_instructions = state["user_instructions"]
     ranked_summaries = state.get("ranked_summaries", [])
-    llm_model = config["configurable"].get("llm_model", "deepseek-r1:latest")
+    # Use the report writing LLM model instead of the general purpose LLM model
+    report_llm = config["configurable"].get("report_llm", "deepseek-r1:latest")
     detected_language = state.get("detected_language", "en")
     print(f"  [Using language: {detected_language}]")
+    print(f"  [Using report writing LLM: {report_llm}]")
     
     # Determine report structure based on the query
     report_structure = """
@@ -521,7 +534,7 @@ def generate_final_answer(state: ResearcherState, config: RunnableConfig):
     )
     
     final_answer = invoke_ollama(
-        model=llm_model,
+        model=report_llm,
         system_prompt=report_prompt,
         user_prompt=f"Create a comprehensive report in {detected_language} language for: {user_instructions}"
     )
@@ -536,9 +549,11 @@ def quality_check_summary(state: QuerySearchState, config: RunnableConfig):
     print("--- Quality checking summary ---")
     query = state["query"]
     current_summary = state["search_summaries"][0]
-    llm_model = config["configurable"].get("llm_model", "deepseek-r1:latest")
+    # Use the summarization LLM model for quality checking as well
+    summarization_llm = config["configurable"].get("summarization_llm", "llama3.2")
     detected_language = state.get("detected_language", config["configurable"].get("detected_language", "en"))
     quality_check_loops = config["configurable"].get("quality_check_loops", 1)  # Get configured loop count
+    print(f"  [Using summarization LLM for quality check: {summarization_llm}]")
     
     # Get the source documents
     information = None
@@ -566,9 +581,9 @@ def quality_check_summary(state: QuerySearchState, config: RunnableConfig):
         # Perform quality check for this document
         print(f"Document '{query}': Quality check iteration {iterations + 1}/{quality_check_loops}")
         
-        # Using local model with Ollama
+        # Using the configured summarization LLM model with Ollama
         quality_check = invoke_ollama(
-            model=llm_model,
+            model=summarization_llm,
             system_prompt=quality_prompt,
             user_prompt=f"Evaluate the quality of this summary in {detected_language} language for the query: {query}",
             output_format=QualityCheckResult

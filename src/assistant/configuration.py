@@ -31,9 +31,32 @@ class Configuration:
     enable_web_search: bool = False
     enable_quality_checker: bool = True
     quality_check_loops: int = 1
-    llm_model: str = "deepseek-r1:latest"
+    llm_model: str = "deepseek-r1:latest"  # Default general purpose LLM model
+    report_llm: str = "deepseek-r1:latest"  # Default report writing LLM model
+    summarization_llm: str = "llama3.2"  # Default summarization LLM model
     #embedding_model: str = "sentence-transformers/all-mpnet-base-v2"
     embedding_model: str = "jinaai/jina-embeddings-v2-base-de"
+    
+    def update_embedding_model(self, model_name: str) -> None:
+        """Update the embedding model at runtime."""
+        self.embedding_model = model_name
+
+# Global configuration instance
+_config_instance = None
+
+def get_config_instance() -> Configuration:
+    """Get the global configuration instance."""
+    global _config_instance
+    if _config_instance is None:
+        _config_instance = Configuration()
+    return _config_instance
+
+def update_embedding_model(model_name: str) -> None:
+    """Update the embedding model in the global configuration."""
+    config = get_config_instance()
+    config.embedding_model = model_name
+    print(f"Updated global embedding model to: {model_name}")
+
 
     @classmethod
     def from_runnable_config(

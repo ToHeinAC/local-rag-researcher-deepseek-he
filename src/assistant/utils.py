@@ -126,7 +126,7 @@ def format_documents_with_metadata(documents, preserve_original=False):
 
 def get_configured_llm_model(default_model='deepseek-r1:latest'):
     """
-    Get the configured LLM model name from environment variable or use the default.
+    Get the configured general purpose LLM model name from environment variable or use the default.
     
     Args:
         default_model (str): Default model to use if not configured
@@ -135,6 +135,30 @@ def get_configured_llm_model(default_model='deepseek-r1:latest'):
         str: The model name to use
     """
     return os.environ.get('LLM_MODEL', default_model)
+
+def get_configured_report_llm_model(default_model='deepseek-r1:latest'):
+    """
+    Get the configured report writing LLM model name from environment variable or use the default.
+    
+    Args:
+        default_model (str): Default model to use if not configured
+        
+    Returns:
+        str: The model name to use for report writing
+    """
+    return os.environ.get('REPORT_LLM', default_model)
+
+def get_configured_summarization_llm_model(default_model='llama3.2'):
+    """
+    Get the configured summarization LLM model name from environment variable or use the default.
+    
+    Args:
+        default_model (str): Default model to use if not configured
+        
+    Returns:
+        str: The model name to use for summarization
+    """
+    return os.environ.get('SUMMARIZATION_LLM', default_model)
 
 def invoke_ollama(model, system_prompt, user_prompt, output_format=None):
     # Use the configured model if none is specified

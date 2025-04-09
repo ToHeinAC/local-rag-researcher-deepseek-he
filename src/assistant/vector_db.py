@@ -9,10 +9,10 @@ DEFAULT_TENANT_ID = "default"
 def get_embedding_model():
     """Get the embedding model."""
     # Import here to avoid circular imports
-    from src.assistant.configuration import Configuration
+    from src.assistant.configuration import get_config_instance
     
-    # Get the embedding model from configuration
-    embedding_model_name = Configuration().embedding_model
+    # Get the embedding model from the global configuration instance
+    embedding_model_name = get_config_instance().embedding_model
     
     emb_model = HuggingFaceEmbeddings(model_name=embedding_model_name, model_kwargs={'device': 'cpu'})
     print('-------------------------')
@@ -24,10 +24,10 @@ def get_embedding_model():
 def get_embedding_model_path():
     """Get the sanitized embedding model name for use in paths."""
     # Import here to avoid circular imports
-    from src.assistant.configuration import Configuration
+    from src.assistant.configuration import get_config_instance
     
-    # Get the embedding model from configuration
-    embedding_model_name = Configuration().embedding_model
+    # Get the embedding model from the global configuration instance
+    embedding_model_name = get_config_instance().embedding_model
     
     # Create a sanitized version of the model name for folder paths
     # Replace slashes with double hyphens

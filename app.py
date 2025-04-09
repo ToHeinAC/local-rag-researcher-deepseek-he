@@ -261,7 +261,9 @@ def generate_response(user_input, enable_web_search, report_structure, max_searc
         "enable_web_search": enable_web_search,
         "report_structure": report_structure,
         "max_search_queries": max_search_queries,
-        "llm_model": report_llm,  # Use the report writing LLM for the final report
+        "llm_model": report_llm,  # General purpose LLM model (used for most tasks)
+        "report_llm": report_llm,  # Specific LLM for report writing
+        "summarization_llm": st.session_state.summarization_llm,  # Specific LLM for summarization
         "enable_quality_checker": enable_quality_checker,
         "quality_check_loops": quality_check_loops,
     }}
@@ -288,8 +290,12 @@ def generate_response(user_input, enable_web_search, report_structure, max_searc
                 embedding_model_name = extract_embedding_model(selected_database)
                 st.info(f"**Embedding Model:** {embedding_model_name}")
                 
-                # Get embedding model
+                # Get embedding model and update the Configuration to use this embedding model
                 embed_model = get_embedding_model(embedding_model_name)
+                
+                # Update the global configuration to use this embedding model
+                from src.assistant.configuration import update_embedding_model
+                update_embedding_model(embedding_model_name)
                 
                 # Get tenant ID from the database directory
                 database_path = os.path.join(DATABASE_PATH, selected_database)
@@ -357,8 +363,8 @@ def generate_response(user_input, enable_web_search, report_structure, max_searc
             st.write("### LangGraph Workflow Visualization")
             
             # Display embedding model information
-            from src.assistant.configuration import Configuration
-            embedding_model = Configuration().embedding_model
+            from src.assistant.configuration import get_config_instance
+            embedding_model = get_config_instance().embedding_model
             st.info(f"**Embedding Model:** {embedding_model}")
             
             # Display the mermaid diagram
