@@ -6,10 +6,11 @@ Your output must only be a JSON object containing a single key "queries":
 * Always include the original user query in the queries.
 * Generate up to {max_queries} additional queries as needed.
 * Today is: {date}
+* Use the following language: {language}
 """
 
 SUMMARIZER_SYSTEM_PROMPT = """
-You are an expert AI summarizer. Create a factual summary from provided documents with EXACT source citations. Follow these rules:
+You are an expert AI summarizer. Create a factual summary from provided documents using the language {language} with EXACT source citations. Follow these rules:
 
 1. **Citation Format**: For citations, ALWAYS use the EXACT format [Source_filename] after each fact. 
 You find the Source_filename in the provided metadata with the following structure:
@@ -35,6 +36,7 @@ Create a deep, comprehensive and accurate representation of the provided origina
 """
 
 RELEVANCE_EVALUATOR_PROMPT = """Determine if the retrieved documents are relevant to the user's query.
+Use the following language: {language}
 
 Your output must only be a valid JSON object with a single key "is_relevant":
 {{"is_relevant": true/false}}
@@ -48,6 +50,7 @@ Your output must only be a valid JSON object with a single key "is_relevant":
 
 
 SUMMARIZER_PROMPT="""Forward the information from the provided documents that is relevant to the query without adding external information or personal opinions.#
+Use the following language: {language}
 
 Query: {query}
 
@@ -72,6 +75,7 @@ You find the Source_filename in the provided metadata with the following structu
 
 
 QUALITY_CHECKER_PROMPT = """Evaluate if the summary contains sufficient and relevant information from the source documents to answer the query.
+Use the following language: {language}
 
 Summary: {summary}
 
@@ -102,7 +106,7 @@ Respond with a valid JSON object with the following structure:
 """
 
 
-REPORT_WRITER_PROMPT = """Create a comprehensive report using the information provided from the research process, preserving the original wording when possible.
+REPORT_WRITER_PROMPT = """Create a comprehensive report in the language {language} using the information provided from the research process, preserving the original wording when possible.
 
 User instruction: {instruction}
 

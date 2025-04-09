@@ -12,6 +12,7 @@ class ResearcherState(TypedDict):
     current_position: int
     final_answer: str
     detected_language: str  # Added field to store detected language
+    additional_context: Optional[str]  # Added field to store additional context from document retrieval
 
 class ResearcherStateInput(TypedDict):
     user_instructions: str
@@ -27,6 +28,7 @@ class QuerySearchState(TypedDict):
     search_summaries: list[str]
     quality_check_results: Optional[Dict[str, Any]]
     summary_improvement_iterations: int
+    detected_language: str  # Added field to store detected language
 
 class QuerySearchStateInput(TypedDict):
     query: str

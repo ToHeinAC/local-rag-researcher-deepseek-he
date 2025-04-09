@@ -53,27 +53,30 @@ def generate_research_queries(state: ResearcherState, config: RunnableConfig):
     max_queries = config["configurable"].get("max_search_queries", 3)
     llm_model = config["configurable"].get("llm_model", "deepseek-r1:latest")
     
+    # Get additional context if available
+    additional_context = state.get("additional_context", "")
+    
+    # Format the query writer prompt
     query_writer_prompt = RESEARCH_QUERY_WRITER_PROMPT.format(
         max_queries=max_queries,
-        date=datetime.datetime.now().strftime("%Y/%m/%d %H:%M")
+        date=datetime.datetime.now().strftime("%Y/%m/%d %H:%M"),
+        language=detected_language
     )
+    
+    # Prepare user prompt with additional context if available
+    user_prompt = f"Generate research queries for this user instruction in {detected_language} language: {user_instructions}"
+    if additional_context:
+        # Use additional context for query generation but don't include it in the research queries
+        user_prompt += f"\n\nConsider this additional context when generating queries: {additional_context}"
     
     # Using local Deepseek R1 model with Ollama
     result = invoke_ollama(
         model=llm_model,
         system_prompt=query_writer_prompt,
-        user_prompt=f"Generate research queries for this user instruction in {detected_language} language: {user_instructions}",
+        user_prompt=user_prompt,
         output_format=Queries
     )
     
-    # Using external LLM providers with OpenRouter: GPT-4o, Claude, Deepseek R1,... 
-    # result = invoke_llm(
-    #     model='gpt-4o-mini',
-    #     system_prompt=query_writer_prompt,
-    #     user_prompt=f"Generate research queries for this user instruction: {user_instructions}",
-    #     output_format=Queries
-    # )
-
     # Add the original human query to the list of research queries
     all_queries = [user_instructions] + result.queries
     
@@ -108,10 +111,14 @@ def initiate_query_research(state: ResearcherState):
 
     # Return the batch of queries to process with detected language and quality_check_loops in config
     return [
-        Send("search_and_summarize_query", {"query": s, "configurable": {
-            "detected_language": detected_language,
-            "quality_check_loops": quality_check_loops
-        }})
+        Send("search_and_summarize_query", {
+            "query": s, 
+            "detected_language": detected_language,  # Pass language directly to the state
+            "configurable": {
+                "detected_language": detected_language,
+                "quality_check_loops": quality_check_loops
+            }
+        })
         for s in current_batch
     ]
 
@@ -119,26 +126,29 @@ def retrieve_rag_documents(state: QuerySearchState):
     """Retrieve documents from the RAG database."""
     print("--- Retrieving documents ---")
     query = state["query"]
+    detected_language = state.get("detected_language", "en")
     
     # Display embedding model information for this retrieval operation
     config = Configuration()
     embedding_model = config.embedding_model
     print(f"  [Using embedding model for retrieval: {embedding_model}]")
+    print(f"  [Using language: {detected_language}]")
     
     # Use the new search_documents function from vector_db.py
     documents = search_documents(query, k=3)
     
-    return {"retrieved_documents": documents}
+    return {"retrieved_documents": documents, "detected_language": detected_language}
 
 def evaluate_retrieved_documents(state: QuerySearchState, config: RunnableConfig):
     query = state["query"]
     retrieved_documents = state["retrieved_documents"]
+    detected_language = state.get("detected_language", config["configurable"].get("detected_language", "en"))
     llm_model = config["configurable"].get("llm_model", "deepseek-r1:latest")
-    detected_language = config["configurable"].get("detected_language", "en")
     
     evaluation_prompt = RELEVANCE_EVALUATOR_PROMPT.format(
         query=query,
-        documents=format_documents_with_metadata(retrieved_documents)
+        documents=format_documents_with_metadata(retrieved_documents),
+        language=detected_language
     )
     
     # Using local Deepseek R1 model with Ollama
@@ -172,7 +182,11 @@ def route_research(state: QuerySearchState, config: RunnableConfig) -> Literal["
 
 def web_research(state: QuerySearchState):
     print("--- Web research ---")
-    output = tavily_search(state["query"])
+    query = state["query"]
+    detected_language = state.get("detected_language", "en")
+    print(f"  [Using language: {detected_language}]")
+    
+    output = tavily_search(query)
     search_results = output["results"]
     
     # Format web search results to include links
@@ -186,13 +200,14 @@ def web_research(state: QuerySearchState):
         formatted_result = f"SOURCE: [{title}]({url})\n\nContent: {content}"
         formatted_results.append(formatted_result)
 
-    return {"web_search_results": formatted_results}
+    return {"web_search_results": formatted_results, "detected_language": detected_language}
 
 def summarize_query_research(state: QuerySearchState, config: RunnableConfig):
     print("--- Summarizing query research ---")
     query = state["query"]
     llm_model = config["configurable"].get("llm_model", "deepseek-r1:latest")
-    detected_language = config["configurable"].get("detected_language", "en")
+    detected_language = state.get("detected_language", config["configurable"].get("detected_language", "en"))
+    print(f"  [Using language: {detected_language}]")
 
     information = None
     if state["are_documents_relevant"]:
@@ -209,7 +224,8 @@ def summarize_query_research(state: QuerySearchState, config: RunnableConfig):
     
     summary_prompt = SUMMARIZER_PROMPT.format(
         query=query,
-        documents=formatted_information
+        documents=formatted_information,
+        language=detected_language
     )
     
     # Using local model with Ollama
@@ -224,7 +240,8 @@ def summarize_query_research(state: QuerySearchState, config: RunnableConfig):
     return {
         "search_summaries": [summary],
         "summary_improvement_iterations": 0,  # Initialize the iteration counter
-        "original_summary": summary  # Store the original summary for reference
+        "original_summary": summary,  # Store the original summary for reference
+        "detected_language": detected_language  # Ensure language is passed forward
     }
 
 def route_after_summarization(state: QuerySearchState, config: RunnableConfig) -> Literal["quality_check_summary", "__end__"]:
@@ -270,7 +287,8 @@ def improve_summary(state: QuerySearchState, config: RunnableConfig):
     current_summary = state["search_summaries"][0]
     quality_check_results = state["quality_check_results"]
     llm_model = config["configurable"].get("llm_model", "deepseek-r1:latest")
-    detected_language = config["configurable"].get("detected_language", "en")
+    detected_language = state.get("detected_language", config["configurable"].get("detected_language", "en"))
+    print(f"  [Using language: {detected_language}]")
     
     # Get current improvement iteration and increment it
     iterations = state.get("summary_improvement_iterations", 0)
@@ -308,6 +326,7 @@ def improve_summary(state: QuerySearchState, config: RunnableConfig):
     
     improvement_prompt = f"""
     You are tasked with improving a summary based on quality check feedback. The summary should accurately reflect the information in the source documents and address the query.
+    Use the following language: {detected_language}
     
     Query: {query}
     
@@ -356,6 +375,7 @@ def filter_search_summaries(state: ResearcherState, config: RunnableConfig):
     search_summaries = state.get("search_summaries", [])
     llm_model = config["configurable"].get("llm_model", "deepseek-r1:latest")
     detected_language = state.get("detected_language", "en")
+    print(f"  [Using language: {detected_language}]")
     
     # If there are no summaries, return empty filtered summaries
     if not search_summaries:
@@ -409,6 +429,7 @@ def rank_search_summaries(state: ResearcherState, config: RunnableConfig):
     filtered_summaries = state.get("filtered_summaries", [])
     llm_model = config["configurable"].get("llm_model", "deepseek-r1:latest")
     detected_language = state.get("detected_language", "en")
+    print(f"  [Using language: {detected_language}]")
     
     # If there are no filtered summaries, return empty rankings
     if not filtered_summaries or (len(filtered_summaries) == 1 and "No relevant information" in filtered_summaries[0]):
@@ -428,6 +449,7 @@ def rank_search_summaries(state: ResearcherState, config: RunnableConfig):
     ranking_prompt = f"""
     Rank the following information summaries based on their relevance to the user's query. 
     Assign a score from 0.0 to 1.0 for each summary, where 1.0 is most relevant.
+    Use the following language: {detected_language}
     
     User Query: {user_instructions}
     
@@ -475,6 +497,7 @@ def generate_final_answer(state: ResearcherState, config: RunnableConfig):
     ranked_summaries = state.get("ranked_summaries", [])
     llm_model = config["configurable"].get("llm_model", "deepseek-r1:latest")
     detected_language = state.get("detected_language", "en")
+    print(f"  [Using language: {detected_language}]")
     
     # Determine report structure based on the query
     report_structure = """
@@ -488,13 +511,13 @@ def generate_final_answer(state: ResearcherState, config: RunnableConfig):
     if ranked_summaries:
         combined_information = "\n\n".join([summary for summary in ranked_summaries])
     else:
-        combined_information = "No relevant information found."
+        combined_information = f"No relevant information was found for the query: {user_instructions}"
     
-    # Generate the final answer
     report_prompt = REPORT_WRITER_PROMPT.format(
         instruction=user_instructions,
         report_structure=report_structure,
-        information=combined_information
+        information=combined_information,
+        language=detected_language
     )
     
     final_answer = invoke_ollama(
@@ -514,7 +537,7 @@ def quality_check_summary(state: QuerySearchState, config: RunnableConfig):
     query = state["query"]
     current_summary = state["search_summaries"][0]
     llm_model = config["configurable"].get("llm_model", "deepseek-r1:latest")
-    detected_language = config["configurable"].get("detected_language", "en")
+    detected_language = state.get("detected_language", config["configurable"].get("detected_language", "en"))
     quality_check_loops = config["configurable"].get("quality_check_loops", 1)  # Get configured loop count
     
     # Get the source documents
@@ -529,7 +552,8 @@ def quality_check_summary(state: QuerySearchState, config: RunnableConfig):
     
     quality_prompt = QUALITY_CHECKER_PROMPT.format(
         summary=current_summary,
-        documents=formatted_information
+        documents=formatted_information,
+        language=detected_language
     )
     
     try:

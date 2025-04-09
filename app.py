@@ -175,7 +175,7 @@ def generate_langgraph_visualization():
         ]
         
         # Create a figure with two subplots - one for main workflow and one for subgraph
-        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 16), height_ratios=[1, 1])
+        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 16), height_ratios=[2, 1])
         
         # Create a subgraph for the main workflow
         main_graph = G.subgraph(main_nodes)
@@ -339,7 +339,7 @@ def generate_response(user_input, enable_web_search, report_structure, max_searc
                         st.info(f"Summary generated in {end_time_summary - start_time_summary:.2f} seconds using {st.session_state.summarization_llm}")
                     
                     # Update the user instructions with the summary to enhance the research
-                    initial_state["user_instructions"] = f"{user_input}\n\nAdditional context from document retrieval:\n{summary['content']}"
+                    initial_state["additional_context"] = summary['content']
                     
                     # Update status to complete
                     retrieval_status.update(state="complete", label="**Document Retrieval Complete**")
