@@ -35,17 +35,12 @@ The 2025 fiscal plan allocates €4.2 million for infrastructure [City_Budget.pd
 Create a deep, comprehensive and accurate representation of the provided original information:
 """
 
-RELEVANCE_EVALUATOR_PROMPT = """Determine if the retrieved documents are relevant to the user's query.
+RELEVANCE_EVALUATOR_PROMPT = """You are a document relevance evaluator.
 Use the following language: {language}
 
+Determine if the retrieved documents are relevant to the user's query.
 Your output must only be a valid JSON object with a single key "is_relevant":
 {{"is_relevant": true/false}}
-
-# USER QUERY:
-{query}
-
-# RETRIEVED DOCUMENTS:
-{documents}
 """
 
 
@@ -107,18 +102,17 @@ Respond with a valid JSON object with the following structure:
 """
 
 
-REPORT_WRITER_PROMPT = """Create a comprehensive deep report in the language {language} using the information provided from the research process, preserving the original wording when possible.
+REPORT_WRITER_PROMPT = """You are an expert report writer. Your task is to create a comprehensive report based ONLY on the information that will be provided in the user message.
 
-User instruction: {instruction}
+The user will provide:
+1. Their original instruction/query
+2. A report structure to follow
+3. Information from the research process
 
-Use the following report structure:
-{report_structure}
-
-Information (i.e. the content from the full retrieval process) from research:
-{information}
+Your job is to create a comprehensive deep report in the language {language} using ONLY the provided information, preserving the original wording when possible.
 
 **Key requirements**:
-1. You MUST NOT add llm knowledge in the report. Use ONLY the "Information", i.e. the content from the full retrieval process and the 
+1. You MUST NOT add any external knowledge to the report. Use ONLY the information provided in the user message.
 2. Do not give any prefix or suffix to the report, just your deep report without any thinking passages.
 3. Structure the report according to the provided template
 4. Focus on answering the user's query clearly and concisely

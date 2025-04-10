@@ -92,12 +92,12 @@ def search_queries(state: ResearcherState):
     return {"current_position": current_position + BATCH_SIZE}
 
 
-def check_more_queries(state: ResearcherState) -> Literal["search_queries", "filter_search_summaries"]:
+def check_more_queries(state: ResearcherState) -> Literal["search_queries", "collect_search_summaries"]:
     """Check if there are more queries to process"""
     current_position = state.get("current_position", 0)
     if current_position < len(state["research_queries"]):
         return "search_queries"
-    return "filter_search_summaries"
+    return "collect_search_summaries"
 
 def initiate_query_research(state: ResearcherState, config: RunnableConfig):
     # Get the next batch of queries
@@ -162,17 +162,25 @@ def evaluate_retrieved_documents(state: QuerySearchState, config: RunnableConfig
     detected_language = state.get("detected_language", config["configurable"].get("detected_language", "en"))
     llm_model = config["configurable"].get("llm_model", "deepseek-r1:latest")
     
+    # Format the system prompt without query and documents
     evaluation_prompt = RELEVANCE_EVALUATOR_PROMPT.format(
-        query=query,
-        documents=format_documents_with_metadata(retrieved_documents),
         language=detected_language
     )
+    
+    # Format the documents for the user prompt
+    formatted_documents = format_documents_with_metadata(retrieved_documents)
     
     # Using local Deepseek R1 model with Ollama
     evaluation = invoke_ollama(
         model=llm_model,
         system_prompt=evaluation_prompt,
-        user_prompt=f"Evaluate the relevance of the retrieved documents for this query in {detected_language} language: {query}",
+        user_prompt=f"""Evaluate the relevance of the retrieved documents for this query in {detected_language} language.
+
+# USER QUERY:
+{query}
+
+# RETRIEVED DOCUMENTS:
+{formatted_documents}""",
         output_format=Evaluation
     )
     
@@ -396,6 +404,11 @@ def filter_search_summaries(state: ResearcherState, config: RunnableConfig):
     detected_language = state.get("detected_language", "en")
     print(f"  [Using language: {detected_language}]")
     
+    # Debug logging to check if summaries are being received
+    print(f"  [DEBUG] Number of search summaries received: {len(search_summaries)}")
+    if search_summaries:
+        print(f"  [DEBUG] First few characters of first summary: {search_summaries[0][:100] if search_summaries[0] else 'Empty summary'}...")
+    
     # If there are no summaries, return empty filtered summaries
     if not search_summaries:
         return {"filtered_summaries": []}
@@ -432,10 +445,33 @@ def filter_search_summaries(state: ResearcherState, config: RunnableConfig):
         if not is_irrelevant:
             filtered_summaries.append(summary)
     
-    # If we have filtered out all summaries, include a placeholder
+    # Get the number of original research queries to determine minimum summaries to keep
+    research_queries = state.get("research_queries", [])
+    min_summaries_to_keep = max(1, len(research_queries))  # At least 1, or the number of queries
+    print(f"  [DEBUG] Minimum summaries to keep: {min_summaries_to_keep}")
+    
+    # If we have fewer filtered summaries than the minimum required, add back some of the filtered out ones
+    if len(filtered_summaries) < min_summaries_to_keep and len(search_summaries) > len(filtered_summaries):
+        print(f"  [DEBUG] Not enough relevant summaries, adding back some filtered ones")
+        
+        # Create a list of summaries that were filtered out
+        filtered_out_summaries = []
+        for summary in search_summaries:
+            if summary and len(summary.strip()) >= 50 and summary not in filtered_summaries:
+                filtered_out_summaries.append(summary)
+        
+        # Add back filtered out summaries until we reach the minimum
+        for summary in filtered_out_summaries:
+            if len(filtered_summaries) >= min_summaries_to_keep:
+                break
+            filtered_summaries.append(summary)
+            print(f"  [DEBUG] Added back a filtered summary, now have {len(filtered_summaries)}")
+    
+    # If we still have no summaries (e.g., all were empty), include a placeholder
     if not filtered_summaries:
         placeholder = f"No relevant information was found for the query: {user_instructions}"
         filtered_summaries = [placeholder]
+        print(f"  [DEBUG] Using placeholder summary")
     
     print(f"Filtered {len(search_summaries)} summaries to {len(filtered_summaries)} relevant ones")
     
@@ -450,11 +486,25 @@ def rank_search_summaries(state: ResearcherState, config: RunnableConfig):
     detected_language = state.get("detected_language", "en")
     print(f"  [Using language: {detected_language}]")
     
+    # Debug logging to check if filtered summaries are being received
+    print(f"  [DEBUG] Number of filtered summaries received: {len(filtered_summaries)}")
+    if filtered_summaries:
+        print(f"  [DEBUG] First few characters of first filtered summary: {filtered_summaries[0][:100] if filtered_summaries[0] else 'Empty summary'}...")
+    
     # If there are no filtered summaries, return empty rankings
-    if not filtered_summaries or (len(filtered_summaries) == 1 and "No relevant information" in filtered_summaries[0]):
+    if not filtered_summaries:
+        print("  [DEBUG] No filtered summaries to rank")
         return {
             "ranked_summaries": [],
             "relevance_scores": []
+        }
+        
+    # If there's only a placeholder summary, use it but don't try to rank it
+    if len(filtered_summaries) == 1 and "No relevant information" in filtered_summaries[0]:
+        print("  [DEBUG] Only have placeholder summary, using as is")
+        return {
+            "ranked_summaries": filtered_summaries,
+            "relevance_scores": [1.0]
         }
     
     # If there's only one summary, return it as is
@@ -514,10 +564,18 @@ def generate_final_answer(state: ResearcherState, config: RunnableConfig):
     print("--- Generating final answer ---")
     user_instructions = state["user_instructions"]
     
-    # Get ranked summaries from state, ensuring we have a valid list even if it's missing
+    # Get all types of summaries from state for debugging
+    search_summaries = state.get("search_summaries", [])
+    filtered_summaries = state.get("filtered_summaries", [])
     ranked_summaries = state.get("ranked_summaries", [])
     
-    # Debug information to help diagnose issues
+    # Comprehensive debug information to help diagnose issues
+    print(f"  [DEBUG] State of summaries at final answer generation:")
+    print(f"  [DEBUG] - Search summaries: {len(search_summaries)}")
+    print(f"  [DEBUG] - Filtered summaries: {len(filtered_summaries)}")
+    print(f"  [DEBUG] - Ranked summaries: {len(ranked_summaries)}")
+    
+    # Original debug info
     print(f"  [Number of ranked summaries available: {len(ranked_summaries)}]")
     
     # Use the report writing LLM model instead of the general purpose LLM model
@@ -560,17 +618,12 @@ def generate_final_answer(state: ResearcherState, config: RunnableConfig):
     else:
         print(f"  [Full combined information: {combined_information}]")
         
-    # Format the report prompt
-    report_prompt = REPORT_WRITER_PROMPT.format(
-        instruction=user_instructions,
-        report_structure=report_structure,
-        information=combined_information,
+    # Format the system prompt using the updated REPORT_WRITER_PROMPT
+    system_prompt = REPORT_WRITER_PROMPT.format(
         language=detected_language
     )
     
-    # Use a more specific system prompt and put the content in the user prompt
-    system_prompt = "You are an expert report writer. Your task is to create a comprehensive report based ONLY on the information provided. Do not add any external knowledge or opinions."
-    
+    # Put all the research information in the user prompt
     user_prompt = f"""
     Create a comprehensive and deep report based on the following information.
     
@@ -581,14 +634,7 @@ def generate_final_answer(state: ResearcherState, config: RunnableConfig):
     
     Information from research (use ONLY this information, do not add any external knowledge):
     {combined_information}
-    
-    IMPORTANT REQUIREMENTS:
-    1. Use ONLY the information provided above. DO NOT add any external knowledge or personal opinions.
-    2. Structure the report according to the provided template.
-    3. For citations, use the format [Source_filename] after each fact.
-    4. Include exact figures, numbers, and statistics ONLY from the provided information.
-    5. Use direct quotes for key definitions and important statements.
-    6. Write in {detected_language} language.
+
     """
     
     # Call the LLM with the improved prompts
@@ -695,6 +741,30 @@ query_search_subgraph.add_conditional_edges("summarize_query_research", route_af
 query_search_subgraph.add_conditional_edges("quality_check_summary", route_quality_check, ["improve_summary", END])
 query_search_subgraph.add_edge("improve_summary", "quality_check_summary")
 
+# Define a collector function to explicitly collect and merge search summaries from the subgraph
+def collect_search_summaries(state: ResearcherState):
+    print("--- Collecting search summaries ---")
+    # Get the current search summaries (if any)
+    current_summaries = state.get("search_summaries", [])
+    print(f"  [DEBUG] Current number of collected summaries: {len(current_summaries)}")
+    
+    # If there are no summaries, create a placeholder
+    if not current_summaries:
+        print("  [WARNING] No search summaries found, creating placeholder")
+        user_instructions = state["user_instructions"]
+        placeholder = f"No relevant information was found for the query: {user_instructions}"
+        return {"search_summaries": [placeholder]}
+    
+    # Print a sample of the summaries for debugging
+    for i, summary in enumerate(current_summaries):
+        if summary:
+            print(f"  [DEBUG] Summary {i+1} first 100 chars: {summary[:100]}...")
+        else:
+            print(f"  [DEBUG] Summary {i+1} is empty or None")
+    
+    # Return the summaries as is (the operator.add annotation in ResearcherState should handle merging)
+    return {}
+
 # Create main research agent graph
 researcher_graph = StateGraph(ResearcherState, input=ResearcherStateInput, output=ResearcherStateOutput, config_schema=Configuration)
 
@@ -704,6 +774,7 @@ researcher_graph.add_node(detect_language)
 researcher_graph.add_node(generate_research_queries)
 researcher_graph.add_node(search_queries)
 researcher_graph.add_node("search_and_summarize_query", query_search_subgraph.compile())
+researcher_graph.add_node(collect_search_summaries)  # Add the collector node
 researcher_graph.add_node(filter_search_summaries)
 researcher_graph.add_node(rank_search_summaries)
 researcher_graph.add_node(generate_final_answer)
@@ -714,7 +785,8 @@ researcher_graph.add_edge("display_embedding_model_info", "detect_language")
 researcher_graph.add_edge("detect_language", "generate_research_queries")
 researcher_graph.add_edge("generate_research_queries", "search_queries")
 researcher_graph.add_conditional_edges("search_queries", initiate_query_research, ["search_and_summarize_query"])
-researcher_graph.add_conditional_edges("search_and_summarize_query", check_more_queries, ["search_queries", "filter_search_summaries"])
+researcher_graph.add_conditional_edges("search_and_summarize_query", check_more_queries, ["search_queries", "collect_search_summaries"])  # Route to collector node
+researcher_graph.add_edge("collect_search_summaries", "filter_search_summaries")  # Then to filter
 researcher_graph.add_edge("filter_search_summaries", "rank_search_summaries")
 researcher_graph.add_edge("rank_search_summaries", "generate_final_answer")
 researcher_graph.add_edge("generate_final_answer", END)

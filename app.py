@@ -335,15 +335,23 @@ def generate_response(user_input, enable_web_search, report_structure, max_searc
                             st.write(f"**Path:** {doc.metadata.get('path', 'Unknown')}")
                             st.write(f"**Content:**\n{doc.page_content}")
                     
+                    # Detect language for summarization
+                    # Initialize language detection using the researcher graph's detect_language function
+                    from src.assistant.graph import detect_language
+                    language_result = detect_language({"user_instructions": user_input}, {"configurable": {"llm_model": report_llm}})
+                    detected_language = language_result.get("detected_language", "en")
+                    
                     # Summarize the results using the summarization LLM
                     st.subheader("Document Summary")
-                    with st.spinner(f"Generating summary using {st.session_state.summarization_llm}..."):
+                    with st.spinner(f"Generating summary using {st.session_state.summarization_llm} in {detected_language}..."):
                         start_time_summary = time.time()
-                        summary = source_summarizer_ollama(user_input, transformed_results, SUMMARIZER_SYSTEM_PROMPT, st.session_state.summarization_llm)
+                        # Format the system prompt with the detected language
+                        formatted_system_prompt = SUMMARIZER_SYSTEM_PROMPT.format(language=detected_language)
+                        summary = source_summarizer_ollama(user_input, transformed_results, detected_language, formatted_system_prompt, st.session_state.summarization_llm)
                         end_time_summary = time.time()
                         
                         st.markdown(summary["content"])
-                        st.info(f"Summary generated in {end_time_summary - start_time_summary:.2f} seconds using {st.session_state.summarization_llm}")
+                        st.info(f"Summary generated in {end_time_summary - start_time_summary:.2f} seconds using {st.session_state.summarization_llm} in {detected_language}")
                     
                     # Update the user instructions with the summary to enhance the research
                     initial_state["additional_context"] = summary['content']

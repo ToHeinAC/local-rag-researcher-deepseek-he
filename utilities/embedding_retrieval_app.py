@@ -11,6 +11,7 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from src.assistant.rag_helpers import load_embed, similarity_search_for_tenant
 from langchain_community.embeddings import HuggingFaceEmbeddings
 from src.assistant.rag_helpers import transform_documents, source_summarizer_ollama
+from src.assistant.prompts import SUMMARIZER_SYSTEM_PROMPT
 
 # Set page config
 st.set_page_config(
@@ -75,7 +76,7 @@ Useful hint: The citation information [Document Name](document_path) is stored i
 }}
 """
 
-SUMMARIZER_SYSTEM_PROMPT = """
+SUMMARIZER_SYSTEM_PROMPT_BUP = """
 You are an expert AI summarizer. Create a factual summary from provided documents with EXACT source citations. Follow these rules:
 
 1. **Citation Format**: For citations, ALWAYS use the EXACT format [Source_filename] after each fact. 
@@ -198,6 +199,10 @@ with tab3:
     # Display current embedding and VDB info
     st.info(f"Current embedding model: **{st.session_state.embedding_model}**")
     
+    # Initialize language in session state if not present
+    if 'summary_language' not in st.session_state:
+        st.session_state.summary_language = "English"
+    
     if st.session_state.vdb_dir:
         st.success(f"Vector database is ready at: **{st.session_state.vdb_dir}**")
     else:
@@ -229,6 +234,18 @@ with tab3:
         options=llm_options,
         index=0
     )
+    
+    # Language selection for summary
+    language_options = ["English", "German", "French", "Spanish", "Italian"]
+    selected_language = st.selectbox(
+        "Choose language for summary",
+        options=language_options,
+        index=language_options.index(st.session_state.summary_language) if st.session_state.summary_language in language_options else 0
+    )
+    
+    # Update session state with selected language
+    if selected_language != st.session_state.summary_language:
+        st.session_state.summary_language = selected_language
     
     # Number of results to retrieve
     k_results = st.slider("Number of results to retrieve", min_value=1, max_value=10, value=3)
@@ -262,15 +279,25 @@ with tab3:
                         st.write(f"**Path:** {doc.metadata.get('path', 'Unknown')}")
                         st.write(f"**Content:**\n{doc.page_content}")
                 
+                # Display the formatted context
+                st.subheader("Formatted Context")
+                # Create the formatted context in the same way as in source_summarizer_ollama
+                formatted_context = "\n".join(
+                    f"Content: {doc['content']}\nSource: {doc['metadata']['name']}\nPath: {doc['metadata']['path']}"
+                    for doc in transformed_results
+                )
+                with st.expander("View Formatted Context"):
+                    st.text_area("Context used for summarization", formatted_context, height=300, disabled=True)
+                
                 # Summarize the results
-                st.subheader("Summary")
-                with st.spinner(f"Generating summary using {selected_llm}..."):
+                st.subheader(f"Summary (in {selected_language})")
+                with st.spinner(f"Generating summary using {selected_llm} in {selected_language}..."):
                     start_time = time.time()
-                    summary = source_summarizer_ollama(query, transformed_results, SUMMARIZER_SYSTEM_PROMPT, selected_llm)
+                    summary = source_summarizer_ollama(query, transformed_results, selected_language, SUMMARIZER_SYSTEM_PROMPT, selected_llm)
                     end_time = time.time()
                     
                     st.markdown(summary["content"])
-                    st.info(f"Summary generated in {end_time - start_time:.2f} seconds using {selected_llm}")
+                    st.info(f"Summary generated in {end_time - start_time:.2f} seconds using {selected_llm} in {selected_language}")
                     
             except Exception as e:
                 st.error(f"Error during retrieval: {str(e)}")

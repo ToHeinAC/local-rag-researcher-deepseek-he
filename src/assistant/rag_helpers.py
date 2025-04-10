@@ -33,7 +33,7 @@ def extract_text_from_pdf(pdf_path):
 
 def clean_(text):
     # Convert to lowercase
-    text = text.lower()
+    #text = text.lower()
     
     # Remove unwanted characters but preserve . , : § $ % &
     text = re.sub(r'[^a-zA-Z0-9\s.,:§$%&€@-µ²³üöäß]', '', text)
@@ -232,7 +232,7 @@ def transform_documents(documents):
     return samples
 
 # Function to summarize sources using Ollama
-def source_summarizer_ollama(query, context_documents, system_message, llm_model="deepseek-r1"):
+def source_summarizer_ollama(query, context_documents, language, system_message, llm_model="deepseek-r1"):
     formatted_context = "\n".join(
         f"Content: {doc['content']}\nSource: {doc['metadata']['name']}\nPath: {doc['metadata']['path']}"
         for doc in context_documents
@@ -250,7 +250,7 @@ def source_summarizer_ollama(query, context_documents, system_message, llm_model
     
     {formatted_context}
     
-    Provide a deep summary with proper citations:
+    Provide a deep summary in the language {language} with proper citations:
     """
     
     # Initialize ChatOllama with the specified model and temperature
