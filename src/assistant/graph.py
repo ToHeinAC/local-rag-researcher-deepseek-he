@@ -6,7 +6,24 @@ from langchain_core.runnables.config import RunnableConfig
 from src.assistant.configuration import Configuration
 from src.assistant.vector_db import get_or_create_vector_db, search_documents, get_embedding_model_path
 from src.assistant.state import ResearcherState, ResearcherStateInput, ResearcherStateOutput, QuerySearchState, QuerySearchStateInput, QuerySearchStateOutput, SummaryRanking
-from src.assistant.prompts import RESEARCH_QUERY_WRITER_PROMPT, RELEVANCE_EVALUATOR_PROMPT, SUMMARIZER_PROMPT, REPORT_WRITER_PROMPT, QUALITY_CHECKER_PROMPT, LANGUAGE_DETECTOR_PROMPT
+from src.assistant.prompts import (
+    # Language detection prompts
+    LANGUAGE_DETECTOR_SYSTEM_PROMPT, LANGUAGE_DETECTOR_HUMAN_PROMPT,
+    # Research query generation prompts
+    RESEARCH_QUERY_WRITER_SYSTEM_PROMPT, RESEARCH_QUERY_WRITER_HUMAN_PROMPT,
+    # Document relevance evaluation prompts
+    RELEVANCE_EVALUATOR_SYSTEM_PROMPT, RELEVANCE_EVALUATOR_HUMAN_PROMPT,
+    # Document summarization prompts
+    SUMMARIZER_SYSTEM_PROMPT, SUMMARIZER_HUMAN_PROMPT,
+    # Quality checking prompts
+    QUALITY_CHECKER_SYSTEM_PROMPT, QUALITY_CHECKER_HUMAN_PROMPT,
+    # Summary improvement prompts
+    SUMMARY_IMPROVEMENT_SYSTEM_PROMPT, SUMMARY_IMPROVEMENT_HUMAN_PROMPT,
+    # Report writing prompts
+    REPORT_WRITER_SYSTEM_PROMPT, REPORT_WRITER_HUMAN_PROMPT,
+    # Ranking prompts
+    RANKING_SYSTEM_PROMPT
+)
 from src.assistant.utils import format_documents_with_metadata, invoke_llm, invoke_ollama, parse_output, tavily_search, Evaluation, Queries, SummaryRankings, SummaryRelevance, QualityCheckResult, DetectedLanguage
 import re
 import time
@@ -21,15 +38,19 @@ def detect_language(state: ResearcherState, config: RunnableConfig):
     user_instructions = state["user_instructions"]
     llm_model = config["configurable"].get("llm_model", "deepseek-r1:latest")
     
-    language_detector_prompt = LANGUAGE_DETECTOR_PROMPT.format(
+    # Format the system prompt
+    system_prompt = LANGUAGE_DETECTOR_SYSTEM_PROMPT
+    
+    # Format the human prompt
+    human_prompt = LANGUAGE_DETECTOR_HUMAN_PROMPT.format(
         query=user_instructions
     )
     
     # Using local model with Ollama
     result = invoke_ollama(
         model=llm_model,
-        system_prompt=language_detector_prompt,
-        user_prompt=f"Detect the language of this query: {user_instructions}",
+        system_prompt=system_prompt,
+        user_prompt=human_prompt,
         output_format=DetectedLanguage
     )
     
@@ -57,24 +78,25 @@ def generate_research_queries(state: ResearcherState, config: RunnableConfig):
     # Get additional context if available
     additional_context = state.get("additional_context", "")
     
-    # Format the query writer prompt
-    query_writer_prompt = RESEARCH_QUERY_WRITER_PROMPT.format(
+    # Format the system prompt
+    system_prompt = RESEARCH_QUERY_WRITER_SYSTEM_PROMPT.format(
         max_queries=max_queries,
         date=datetime.datetime.now().strftime("%Y/%m/%d %H:%M"),
         language=detected_language
     )
     
-    # Prepare user prompt with additional context if available
-    user_prompt = f"Generate research queries for this user instruction in {detected_language} language: {user_instructions}"
-    if additional_context:
-        # Use additional context for query generation but don't include it in the research queries
-        user_prompt += f"\n\nConsider this additional context when generating queries: {additional_context}"
+    # Format the human prompt
+    human_prompt = RESEARCH_QUERY_WRITER_HUMAN_PROMPT.format(
+        query=user_instructions,
+        language=detected_language,
+        additional_context=f"Consider this additional context when generating queries: {additional_context}" if additional_context else ""
+    )
     
     # Using local Deepseek R1 model with Ollama
     result = invoke_ollama(
         model=llm_model,
-        system_prompt=query_writer_prompt,
-        user_prompt=user_prompt,
+        system_prompt=system_prompt,
+        user_prompt=human_prompt,
         output_format=Queries
     )
     
@@ -95,7 +117,7 @@ def search_queries(state: ResearcherState):
 def check_more_queries(state: ResearcherState) -> Literal["search_queries", "collect_search_summaries"]:
     """Check if there are more queries to process"""
     current_position = state.get("current_position", 0)
-    if current_position < len(state["research_queries"]):
+    if current_position <= len(state["research_queries"]):
         return "search_queries"
     return "collect_search_summaries"
 
@@ -105,7 +127,7 @@ def initiate_query_research(state: ResearcherState, config: RunnableConfig):
     current_position = state["current_position"]
     batch_end = min(current_position, len(queries))
     current_batch = queries[current_position - BATCH_SIZE:batch_end]
-    detected_language = state.get("detected_language", "en")
+    detected_language = state.get("detected_language", "English")
     
     # Get the quality check loops from the main config
     quality_check_loops = state.get("quality_check_loops", 1)
@@ -139,7 +161,7 @@ def retrieve_rag_documents(state: QuerySearchState, config: RunnableConfig):
     """Retrieve documents from the RAG database."""
     print("--- Retrieving documents ---")
     query = state["query"]
-    detected_language = state.get("detected_language", "en")
+    detected_language = state.get("detected_language", "English")
     
     # Get the number of results to retrieve from config
     k_results = config["configurable"].get("k_results", 3)  # Default to 3 if not specified
@@ -154,33 +176,34 @@ def retrieve_rag_documents(state: QuerySearchState, config: RunnableConfig):
     # Use the new search_documents function from vector_db.py with user-specified k
     documents = search_documents(query, k=k_results)
     
-    return {"retrieved_documents": documents, "detected_language": detected_language}
+    return {"retrieved_documents": documents}
 
 def evaluate_retrieved_documents(state: QuerySearchState, config: RunnableConfig):
     query = state["query"]
     retrieved_documents = state["retrieved_documents"]
-    detected_language = state.get("detected_language", config["configurable"].get("detected_language", "en"))
+    detected_language = state.get("detected_language", "English")
     llm_model = config["configurable"].get("llm_model", "deepseek-r1:latest")
     
-    # Format the system prompt without query and documents
-    evaluation_prompt = RELEVANCE_EVALUATOR_PROMPT.format(
+    # Format the system prompt
+    system_prompt = RELEVANCE_EVALUATOR_SYSTEM_PROMPT.format(
         language=detected_language
     )
     
     # Format the documents for the user prompt
     formatted_documents = format_documents_with_metadata(retrieved_documents)
     
+    # Format the human prompt
+    human_prompt = RELEVANCE_EVALUATOR_HUMAN_PROMPT.format(
+        query=query,
+        documents=formatted_documents,
+        language=detected_language
+    )
+    
     # Using local Deepseek R1 model with Ollama
     evaluation = invoke_ollama(
         model=llm_model,
-        system_prompt=evaluation_prompt,
-        user_prompt=f"""Evaluate the relevance of the retrieved documents for this query in {detected_language} language.
-
-# USER QUERY:
-{query}
-
-# RETRIEVED DOCUMENTS:
-{formatted_documents}""",
+        system_prompt=system_prompt,
+        user_prompt=human_prompt,
         output_format=Evaluation
     )
     
@@ -225,7 +248,7 @@ def web_research(state: QuerySearchState):
         formatted_result = f"SOURCE: [{title}]({url})\n\nContent: {content}"
         formatted_results.append(formatted_result)
 
-    return {"web_search_results": formatted_results, "detected_language": detected_language}
+    return {"web_search_results": formatted_results}
 
 def summarize_query_research(state: QuerySearchState, config: RunnableConfig):
     print("--- Summarizing query research ---")
@@ -249,7 +272,13 @@ def summarize_query_research(state: QuerySearchState, config: RunnableConfig):
     # Preserve original content as much as possible
     formatted_information = format_documents_with_metadata(information, preserve_original=True) if state["are_documents_relevant"] else information
     
-    summary_prompt = SUMMARIZER_PROMPT.format(
+    # Format the system prompt
+    system_prompt = SUMMARIZER_SYSTEM_PROMPT.format(
+        language=detected_language
+    )
+    
+    # Format the human prompt
+    human_prompt = SUMMARIZER_HUMAN_PROMPT.format(
         query=query,
         documents=formatted_information,
         language=detected_language
@@ -258,8 +287,8 @@ def summarize_query_research(state: QuerySearchState, config: RunnableConfig):
     # Using the configured summarization LLM model with Ollama
     summary = invoke_ollama(
         model=summarization_llm,
-        system_prompt=summary_prompt,
-        user_prompt=f"Extract and include relevant information from the documents that answers this query in {detected_language} language, preserving original wording: {query}"
+        system_prompt=system_prompt,
+        user_prompt=human_prompt
     )
     # Remove thinking part if present
     summary = parse_output(summary)["response"]
@@ -268,7 +297,6 @@ def summarize_query_research(state: QuerySearchState, config: RunnableConfig):
         "search_summaries": [summary],
         "summary_improvement_iterations": 0,  # Initialize the iteration counter
         "original_summary": summary,  # Store the original summary for reference
-        "detected_language": detected_language  # Ensure language is passed forward
     }
 
 def route_after_summarization(state: QuerySearchState, config: RunnableConfig) -> Literal["quality_check_summary", "__end__"]:
@@ -314,7 +342,7 @@ def improve_summary(state: QuerySearchState, config: RunnableConfig):
     current_summary = state["search_summaries"][0]
     quality_check_results = state["quality_check_results"]
     llm_model = config["configurable"].get("llm_model", "deepseek-r1:latest")
-    detected_language = state.get("detected_language", config["configurable"].get("detected_language", "en"))
+    detected_language = state.get("detected_language", "English")
     print(f"  [Using language: {detected_language}]")
     
     # Get current improvement iteration and increment it
@@ -351,30 +379,25 @@ def improve_summary(state: QuerySearchState, config: RunnableConfig):
     if citation_issues:
         formatted_issues += "\nCitation issues:\n" + "\n".join([f"- {issue}" for issue in citation_issues])
     
-    improvement_prompt = f"""
-    You are tasked with improving a summary based on quality check feedback. The summary should accurately reflect the information in the source documents and address the query.
-    Use the following language: {detected_language}
+    # Format the system prompt
+    system_prompt = SUMMARY_IMPROVEMENT_SYSTEM_PROMPT.format(
+        language=detected_language
+    )
     
-    Query: {query}
-    
-    Current Summary:
-    {current_summary}
-    
-    Quality Check Feedback:
-    {improvement_suggestions}
-    {formatted_issues}
-    
-    Source Documents:
-    {formatted_information}
-    
-    Please provide an improved summary that addresses the feedback and better answers the query. Ensure that all information is accurate and properly cited.
-    """
+    # Format the human prompt
+    human_prompt = SUMMARY_IMPROVEMENT_HUMAN_PROMPT.format(
+        query=query,
+        summary=current_summary,
+        feedback=f"{improvement_suggestions}\n{formatted_issues}",
+        documents=formatted_information,
+        language=detected_language
+    )
     
     # Using local model with Ollama
     improved_summary = invoke_ollama(
         model=llm_model,
-        system_prompt="You are an expert summarizer. Improve the summary based on the feedback provided.",
-        user_prompt=f"Improve this summary in {detected_language} language based on the feedback: {improvement_prompt}"
+        system_prompt=system_prompt,
+        user_prompt=human_prompt
     )
     
     # Using external LLM providers with OpenRouter: GPT-4o, Claude, Deepseek R1,... 
@@ -401,7 +424,7 @@ def filter_search_summaries(state: ResearcherState, config: RunnableConfig):
     user_instructions = state["user_instructions"]
     search_summaries = state.get("search_summaries", [])
     llm_model = config["configurable"].get("llm_model", "deepseek-r1:latest")
-    detected_language = state.get("detected_language", "en")
+    detected_language = state.get("detected_language", "English")
     print(f"  [Using language: {detected_language}]")
     
     # Debug logging to check if summaries are being received
@@ -483,7 +506,7 @@ def rank_search_summaries(state: ResearcherState, config: RunnableConfig):
     user_instructions = state["user_instructions"]
     filtered_summaries = state.get("filtered_summaries", [])
     llm_model = config["configurable"].get("llm_model", "deepseek-r1:latest")
-    detected_language = state.get("detected_language", "en")
+    detected_language = state.get("detected_language", "English")
     print(f"  [Using language: {detected_language}]")
     
     # Debug logging to check if filtered summaries are being received
@@ -515,30 +538,27 @@ def rank_search_summaries(state: ResearcherState, config: RunnableConfig):
         }
     
     # For multiple summaries, use the LLM to rank them
-    ranking_prompt = f"""
-    Rank the following information summaries based on their relevance to the user's query. 
-    Assign a score from 10 for each summary, where 10 is most relevant.
-    Use the following language: {detected_language}
-    
-    User Query: {user_instructions}
-    
-    Summaries to rank:
-    """
-    
-    # Add each summary to the prompt
+    # Create a formatted string of all summaries to pass to the prompt
+    formatted_summaries = ""
     for i, summary in enumerate(filtered_summaries):
-        ranking_prompt += f"\n\nSummary {i+1}:\n{summary}"
-    
-    ranking_prompt += "\n\nProvide your ranking as a JSON object with the following structure:"
-    ranking_prompt += "\n{\"rankings\": [{\"summary_index\": 0, \"relevance_score\": 0.9, \"justification\": \"reason\"}, ...]}"
-    ranking_prompt += "\nwhere 'summary_index' is the 0-based index of the summary."
+        formatted_summaries += f"\n\nSummary {i+1}:\n{summary}"
+        
+    ranking_prompt = RANKING_SYSTEM_PROMPT.format(
+        detected_language=detected_language,
+        user_instructions=user_instructions,
+        summaries=formatted_summaries
+    )
+    # Add instructions for the JSON output format
+    user_prompt = "Provide your ranking as a JSON object with the following structure:"
+    user_prompt += "\n{\"rankings\": [{\"summary_index\": 0, \"relevance_score\": 9, \"justification\": \"reason\"}, ...]}"
+    user_prompt += "\nwhere 'summary_index' is the 0-based index of the summary."
     
     # Using local model with Ollama
     try:
         rankings = invoke_ollama(
             model=llm_model,
             system_prompt=ranking_prompt,
-            user_prompt=f"Rank these summaries in {detected_language} language based on their relevance to: {user_instructions}",
+            user_prompt=user_prompt,
             output_format=SummaryRankings
         )
         
@@ -618,30 +638,24 @@ def generate_final_answer(state: ResearcherState, config: RunnableConfig):
     else:
         print(f"  [Full combined information: {combined_information}]")
         
-    # Format the system prompt using the updated REPORT_WRITER_PROMPT
-    system_prompt = REPORT_WRITER_PROMPT.format(
+    # Format the system prompt
+    system_prompt = REPORT_WRITER_SYSTEM_PROMPT.format(
         language=detected_language
     )
     
-    # Put all the research information in the user prompt
-    user_prompt = f"""
-    Create a comprehensive and deep report based on the following information.
-    
-    User instruction: {user_instructions}
-    
-    Report structure to follow:
-    {report_structure}
-    
-    Information from research (use ONLY this information, do not add any external knowledge):
-    {combined_information}
-
-    """
+    # Format the human prompt
+    human_prompt = REPORT_WRITER_HUMAN_PROMPT.format(
+        language=detected_language,
+        instruction=user_instructions,
+        report_structure=report_structure,
+        information=combined_information
+    )
     
     # Call the LLM with the improved prompts
     final_answer = invoke_ollama(
         model=report_llm,
         system_prompt=system_prompt,
-        user_prompt=user_prompt
+        user_prompt=human_prompt
     )
     
     # Remove thinking part if present
@@ -670,7 +684,13 @@ def quality_check_summary(state: QuerySearchState, config: RunnableConfig):
     # Format documents with metadata
     formatted_information = format_documents_with_metadata(information) if state["are_documents_relevant"] else information
     
-    quality_prompt = QUALITY_CHECKER_PROMPT.format(
+    # Format the system prompt
+    system_prompt = QUALITY_CHECKER_SYSTEM_PROMPT.format(
+        language=detected_language
+    )
+    
+    # Format the human prompt
+    human_prompt = QUALITY_CHECKER_HUMAN_PROMPT.format(
         summary=current_summary,
         documents=formatted_information,
         language=detected_language
@@ -689,8 +709,8 @@ def quality_check_summary(state: QuerySearchState, config: RunnableConfig):
         # Using the configured summarization LLM model with Ollama
         quality_check = invoke_ollama(
             model=summarization_llm,
-            system_prompt=quality_prompt,
-            user_prompt=f"Evaluate the quality of this summary in {detected_language} language for the query: {query}",
+            system_prompt=system_prompt,
+            user_prompt=human_prompt,
             output_format=QualityCheckResult
         )
         
@@ -762,8 +782,9 @@ def collect_search_summaries(state: ResearcherState):
         else:
             print(f"  [DEBUG] Summary {i+1} is empty or None")
     
-    # Return the summaries as is (the operator.add annotation in ResearcherState should handle merging)
-    return {}
+    # Explicitly return the summaries to ensure they're passed to the next step
+    # The operator.add annotation in ResearcherState will handle merging
+    return {"search_summaries": current_summaries}
 
 # Create main research agent graph
 researcher_graph = StateGraph(ResearcherState, input=ResearcherStateInput, output=ResearcherStateOutput, config_schema=Configuration)
