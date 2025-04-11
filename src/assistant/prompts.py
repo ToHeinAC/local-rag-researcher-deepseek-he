@@ -1,6 +1,6 @@
 # Language detection prompts
 LANGUAGE_DETECTOR_SYSTEM_PROMPT = """You are a language detection expert.
-Detect the language of the user's query and respond with a valid JSON object with a single key 'language', e.g. English, German, French, etc.
+Detect the language of the user's query and respond with a valid JSON object with a single key 'language', e.g. 'English' , 'German', 'French', etc.
 
 Your output must only be a valid JSON object with a single key 'language':
 {{'language': 'detected_language'}}
@@ -29,7 +29,7 @@ The additional context is:
 {additional_context}"""
 
 
-SUMMARIZER_SYSTEM_PROMPT = """
+SUMMARIZER_SYSTEM_PROMPT_old = """
 You are an expert AI summarizer. Create a factual summary from provided documents STRICTLY using the language {language} with EXACT source citations. Follow these rules:
 
 1. **Citation Format**: For citations, ALWAYS use the EXACT format [Source_filename] after each fact. 
@@ -59,7 +59,7 @@ Create a deep, comprehensive and accurate representation of the provided origina
 RELEVANCE_EVALUATOR_SYSTEM_PROMPT = """You are a document relevance evaluator.
 Use the following language: {language}
 
-Determine if the retrieved documents are relevant to the user's query.
+Determine if the retrieved documents are relevant to the user's query. Only give false if the documents are completely out of context, e.g. the query is about a completely different topic.
 Your output must only be a valid JSON object with a single key "is_relevant":
 {{"is_relevant": true/false}}
 """
@@ -91,14 +91,19 @@ You find the Source_filename in the provided metadata with the following structu
 5. Maintain precise numerical values, ranges, percentages, or measurements
 6. Clearly attribute information to specific sources when multiple Documents are provided
 7. Do not give any prefix or suffix to the summary, just your summary without any thinking passages
+
+You will be provided with the documents and the query.
 """
 
-SUMMARIZER_HUMAN_PROMPT = """Extract and compile all relevant information from the documents that answers this query in {language} language, preserving original wording: {query}
+SUMMARIZER_HUMAN_PROMPT = """ 
+Query:
+{query}
 
 Documents:
 {documents}
 
-If the retrieved documents are not relevant to the query, state this clearly. Never add external information or personal opinions."""
+INSTRUCTION: Extract and compile all relevant information from the Documents in form of an executive deep summary that answers the Query.
+"""
 
 
 
@@ -175,7 +180,12 @@ Information from research (use ONLY this information, do not add any external kn
 
 # Summary improvement prompts
 SUMMARY_IMPROVEMENT_SYSTEM_PROMPT = """You are an expert summary improver.
-Your task is to improve a summary based on quality check feedback.
+Your task is to improve a summary based SOLELY on the retrieved information and the quality check feedback.
+
+**Most Important**: 
+1. YOU MUST NOT add any external knowledge (e.g. llm general knowledge, common sense, etc.) or personal opinions.
+2. In case you cannot improve the summary, state this explicitly. In this case, YOU MUST return the original summary.
+
 For your response, STRICTLY use the following language: {language}
 
 When improving the summary:
@@ -190,7 +200,8 @@ When improving the summary:
 9. Do not include any thinking or reasoning about your process
 """
 
-SUMMARY_IMPROVEMENT_HUMAN_PROMPT = """Improve this summary in {language} language based on the quality check feedback.
+SUMMARY_IMPROVEMENT_HUMAN_PROMPT = """Improve this summary in {language} language based SOLELY on the Original query, the Original summary, the source documents and the quality check feedback.
+Try to address all the issues mentioned in the feedback while maintaining accuracy and completeness.
 
 Original query: {query}
 
@@ -203,13 +214,13 @@ Quality check feedback:
 Source documents for reference:
 {documents}
 
-Please address all the issues mentioned in the feedback while maintaining accuracy and completeness."""
+"""
 
 RANKING_SYSTEM_PROMPT = """You are an expert summary ranker.
 
 Rank the following information summaries based on their relevance to the user's query. 
-Assign a score from 10 for each summary, where 10 is most relevant.
-Use the following language: {detected_language}
+Assign a score from 0 to 10 for each summary, where 10 is most relevant.
+For your response, STRICTLY use the following language: {language}
 
 User Query: {user_instructions}
 

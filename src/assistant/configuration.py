@@ -31,7 +31,7 @@ class Configuration:
     enable_web_search: bool = False
     enable_quality_checker: bool = True
     quality_check_loops: int = 1
-    llm_model: str = "deepseek-r1:latest"  # Default general purpose LLM model
+    llm_model: str = "mistral-small:latest"  # Default general purpose LLM model
     report_llm: str = "deepseek-r1:latest"  # Default report writing LLM model
     summarization_llm: str = "llama3.2"  # Default summarization LLM model
     #embedding_model: str = "sentence-transformers/all-mpnet-base-v2"

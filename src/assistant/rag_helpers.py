@@ -72,7 +72,7 @@ def get_tenant_vectorstore(tenant_id, embed_llm, persist_directory, similarity, 
         collection_metadata={"hnsw:space": similarity, "normalize_embeddings": normal}
     )
 
-def similarity_search_for_tenant(tenant_id, embed_llm, persist_directory, similarity, normal, query, k=2):
+def similarity_search_for_tenant(tenant_id, embed_llm, persist_directory, similarity, normal, query, k=2, language="English"):
     # Import clear_cuda_memory here to avoid circular imports
     from src.assistant.utils import clear_cuda_memory
     
@@ -98,8 +98,16 @@ def similarity_search_for_tenant(tenant_id, embed_llm, persist_directory, simila
     )
     
     try:
+        # Print language being used for retrieval
+        print(f"Using language for retrieval: {language}")
+        
         # Perform similarity search
         results = vectorstore.similarity_search(query, k=k)
+        
+        # Add language metadata to each document for downstream processing
+        for doc in results:
+            if "metadata" in doc.__dict__:
+                doc.metadata["language"] = language
         
         # Clean up
         vectorstore._client = None

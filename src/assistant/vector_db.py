@@ -132,7 +132,7 @@ def add_documents(documents):
     # Return the updated vector store
     return get_or_create_vector_db()
 
-def search_documents(query, k=3):
+def search_documents(query, k=3, language="English"):
     """Search for documents in the vector store."""
     # Import clear_cuda_memory here to avoid circular imports
     from src.assistant.utils import clear_cuda_memory
@@ -147,6 +147,7 @@ def search_documents(query, k=3):
     
     try:
         # Use similarity_search_for_tenant to search for documents
+        print(f"Searching documents with language: {language}")
         documents = similarity_search_for_tenant(
             tenant_id=tenant_id,
             embed_llm=embeddings,
@@ -154,7 +155,8 @@ def search_documents(query, k=3):
             similarity="cosine",
             normal=True,
             query=query,
-            k=k
+            k=k,
+            language=language  # Pass the language parameter
         )
         
         # Clear CUDA memory after embedding

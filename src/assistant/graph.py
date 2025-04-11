@@ -25,6 +25,7 @@ from src.assistant.prompts import (
     RANKING_SYSTEM_PROMPT
 )
 from src.assistant.utils import format_documents_with_metadata, invoke_llm, invoke_ollama, parse_output, tavily_search, Evaluation, Queries, SummaryRankings, SummaryRelevance, QualityCheckResult, DetectedLanguage
+from src.assistant.rag_helpers import source_summarizer_ollama
 import re
 import time
 
@@ -37,6 +38,16 @@ def detect_language(state: ResearcherState, config: RunnableConfig):
     print("--- Detecting language of user query ---")
     user_instructions = state["user_instructions"]
     llm_model = config["configurable"].get("llm_model", "deepseek-r1:latest")
+    
+    # First check if a language is already set in the config (from GUI)
+    user_selected_language = config["configurable"].get("selected_language", None)
+    
+    if user_selected_language:
+        print(f"Using user-selected language: {user_selected_language}")
+        return {"detected_language": user_selected_language}
+    
+    # If no language is set in config, detect it from the query
+    print("No language selected by user, detecting from query...")
     
     # Format the system prompt
     system_prompt = LANGUAGE_DETECTOR_SYSTEM_PROMPT
@@ -117,7 +128,15 @@ def search_queries(state: ResearcherState):
 def check_more_queries(state: ResearcherState) -> Literal["search_queries", "collect_search_summaries"]:
     """Check if there are more queries to process"""
     current_position = state.get("current_position", 0)
-    if current_position <= len(state["research_queries"]):
+    research_queries = state.get("research_queries", [])
+    
+    # Print debug information
+    print(f"  [DEBUG] check_more_queries: current_position={current_position}, len(research_queries)={len(research_queries)}")
+    
+    # Check if there are more queries to process
+    # We need to ensure current_position is less than the length of research_queries
+    # to avoid processing empty batches
+    if current_position < len(research_queries):
         return "search_queries"
     return "collect_search_summaries"
 
@@ -125,9 +144,34 @@ def initiate_query_research(state: ResearcherState, config: RunnableConfig):
     # Get the next batch of queries
     queries = state["research_queries"]
     current_position = state["current_position"]
+    
+    # Print debug information
+    print(f"  [DEBUG] initiate_query_research: current_position={current_position}, len(queries)={len(queries)}")
+    
+    # Calculate the start and end indices for the current batch
+    batch_start = max(0, current_position - BATCH_SIZE)
     batch_end = min(current_position, len(queries))
-    current_batch = queries[current_position - BATCH_SIZE:batch_end]
+    
+    # Get the current batch of queries
+    current_batch = queries[batch_start:batch_end]
+    
+    # Print debug information about the batch
+    print(f"  [DEBUG] Processing batch: {batch_start}:{batch_end}, batch size: {len(current_batch)}")
+    
+    # Get the detected language from state - this comes from the detect_language node
+    # and should be preserved throughout the workflow
     detected_language = state.get("detected_language", "English")
+    print(f"Using language for query research: {detected_language}")
+    
+    # Store the detected language in the global configuration to ensure consistency
+    from src.assistant.configuration import get_config_instance
+    config_obj = get_config_instance()
+    if hasattr(config_obj, 'detected_language'):
+        config_obj.detected_language = detected_language
+    else:
+        # Add detected_language attribute dynamically if it doesn't exist
+        setattr(config_obj, 'detected_language', detected_language)
+    print(f"Stored detected language '{detected_language}' in global configuration")
     
     # Get the quality check loops from the main config
     quality_check_loops = state.get("quality_check_loops", 1)
@@ -167,14 +211,26 @@ def retrieve_rag_documents(state: QuerySearchState, config: RunnableConfig):
     k_results = config["configurable"].get("k_results", 3)  # Default to 3 if not specified
     
     # Display embedding model information for this retrieval operation
-    config_obj = Configuration()
+    # Use the global configuration instance instead of creating a new one
+    from src.assistant.configuration import get_config_instance
+    config_obj = get_config_instance()
     embedding_model = config_obj.embedding_model
+    
+    # Get the detected language from the global configuration if available
+    # This ensures consistency with the language detected in the main workflow
+    if hasattr(config_obj, 'detected_language'):
+        # Use the language from global config, which was set in initiate_query_research
+        detected_language = config_obj.detected_language
+        print(f"  [Using language from global config: {detected_language}]")
+    else:
+        # Fallback to the language from state if not in global config
+        print(f"  [Using language from state: {detected_language}]")
+    
     print(f"  [Using embedding model for retrieval: {embedding_model}]")
-    print(f"  [Using language: {detected_language}]")
     print(f"  [Retrieving {k_results} results per query]")
     
-    # Use the new search_documents function from vector_db.py with user-specified k
-    documents = search_documents(query, k=k_results)
+    # Use the new search_documents function from vector_db.py with user-specified k and language
+    documents = search_documents(query, k=k_results, language=detected_language)
     
     return {"retrieved_documents": documents}
 
@@ -231,7 +287,7 @@ def route_research(state: QuerySearchState, config: RunnableConfig) -> Literal["
 def web_research(state: QuerySearchState):
     print("--- Web research ---")
     query = state["query"]
-    detected_language = state.get("detected_language", "en")
+    detected_language = state.get("detected_language", "English")
     print(f"  [Using language: {detected_language}]")
     
     output = tavily_search(query)
@@ -255,7 +311,7 @@ def summarize_query_research(state: QuerySearchState, config: RunnableConfig):
     query = state["query"]
     # Use the summarization LLM model instead of the general purpose LLM model
     summarization_llm = config["configurable"].get("summarization_llm", "llama3.2")
-    detected_language = state.get("detected_language", config["configurable"].get("detected_language", "en"))
+    detected_language = state.get("detected_language", config["configurable"].get("detected_language", "English"))
     print(f"  [Using language: {detected_language}]")
     print(f"  [Using summarization LLM: {summarization_llm}]")
 
@@ -270,33 +326,28 @@ def summarize_query_research(state: QuerySearchState, config: RunnableConfig):
 
     # Format documents with metadata but simplified without emphasis on citations
     # Preserve original content as much as possible
-    formatted_information = format_documents_with_metadata(information, preserve_original=True) if state["are_documents_relevant"] else information
+    context_documents = format_documents_with_metadata(information, preserve_original=True) if state["are_documents_relevant"] else information
     
-    # Format the system prompt
+    # Format the system prompt for source_summarizer_ollama
     system_prompt = SUMMARIZER_SYSTEM_PROMPT.format(
         language=detected_language
     )
     
-    # Format the human prompt
-    human_prompt = SUMMARIZER_HUMAN_PROMPT.format(
+    # Use source_summarizer_ollama from rag_helpers.py
+    summary_result = source_summarizer_ollama(
         query=query,
-        documents=formatted_information,
-        language=detected_language
+        context_documents=context_documents,
+        language=detected_language,
+        system_message=system_prompt,
+        llm_model=summarization_llm
     )
     
-    # Using the configured summarization LLM model with Ollama
-    summary = invoke_ollama(
-        model=summarization_llm,
-        system_prompt=system_prompt,
-        user_prompt=human_prompt
-    )
-    # Remove thinking part if present
-    summary = parse_output(summary)["response"]
+    # Extract the content from the result
+    summary = summary_result["content"]
 
     return {
         "search_summaries": [summary],
         "summary_improvement_iterations": 0,  # Initialize the iteration counter
-        "original_summary": summary,  # Store the original summary for reference
     }
 
 def route_after_summarization(state: QuerySearchState, config: RunnableConfig) -> Literal["quality_check_summary", "__end__"]:
@@ -312,34 +363,45 @@ def route_after_summarization(state: QuerySearchState, config: RunnableConfig) -
 
 def route_quality_check(state: QuerySearchState, config: RunnableConfig) -> Literal["improve_summary", "__end__"]:
     """Route based on quality check results."""
+    # Get quality check results
     quality_results = state.get("quality_check_results", {})
     
-    # Check if improvement is needed based on the simplified quality metrics
+    # Check if improvement is needed based on the quality metrics
     improvement_needed = quality_results.get("improvement_needed", False)
     quality_score = quality_results.get("quality_score", 0.7)
     is_sufficient = quality_results.get("is_accurate", True) and quality_results.get("is_complete", True)
     
-    # Get current improvement iteration for this specific document
+    # Get current improvement iteration for this document
     iterations = state.get("summary_improvement_iterations", 0)
     
     # Get the maximum number of quality check loops from config
     quality_check_loops = config["configurable"].get("quality_check_loops", 1)
     
-    # Only improve if we haven't reached the maximum number of iterations for this document
-    if iterations < quality_check_loops:
-        print(f"Document '{state['query']}': Proceeding with summary improvement. Quality score: {quality_score}, Sufficient: {is_sufficient}")
-        print(f"Document '{state['query']}': Improvement iteration {iterations + 1}/{quality_check_loops}")
+    # Log quality check information
+    print(f"Document '{state['query']}': Quality check - Score: {quality_score}, Sufficient: {is_sufficient}, Improvement needed: {improvement_needed}")
+    
+    # Check if improvement is needed and possible
+    if improvement_needed and iterations < quality_check_loops:
+        print(f"Document '{state['query']}': Proceeding with summary improvement (iteration {iterations + 1}/{quality_check_loops})")
         return "improve_summary"
     else:
-        print(f"Document '{state['query']}': Reached maximum number of improvement iterations ({quality_check_loops}). Quality score: {quality_score}, Sufficient: {is_sufficient}")
+        # If no improvement is needed or possible, end the process
+        if not improvement_needed:
+            print(f"Document '{state['query']}': No improvement needed")
+        else:
+            print(f"Document '{state['query']}': Reached maximum improvement iterations ({quality_check_loops})")
         return "__end__"
 
 def improve_summary(state: QuerySearchState, config: RunnableConfig):
     """Improve the summary based on quality check feedback."""
     print("--- Improving summary based on quality check ---")
     query = state["query"]
-    original_summary = state.get("original_summary", state["search_summaries"][0])
-    current_summary = state["search_summaries"][0]
+    
+    # Get the initial summary - this is crucial to ensure we always have a summary to return
+    assert state["search_summaries"] != []
+    initial_summary = state["search_summaries"]
+    
+    # Get quality check results and other configuration
     quality_check_results = state["quality_check_results"]
     llm_model = config["configurable"].get("llm_model", "deepseek-r1:latest")
     detected_language = state.get("detected_language", "English")
@@ -387,34 +449,38 @@ def improve_summary(state: QuerySearchState, config: RunnableConfig):
     # Format the human prompt
     human_prompt = SUMMARY_IMPROVEMENT_HUMAN_PROMPT.format(
         query=query,
-        summary=current_summary,
+        summary=initial_summary,
         feedback=f"{improvement_suggestions}\n{formatted_issues}",
         documents=formatted_information,
         language=detected_language
     )
     
-    # Using local model with Ollama
-    improved_summary = invoke_ollama(
-        model=llm_model,
-        system_prompt=system_prompt,
-        user_prompt=human_prompt
-    )
+    try:
+        # Using local model with Ollama
+        improved_summary_result = invoke_ollama(
+            model=report_writer_llm,
+            system_prompt=system_prompt,
+            user_prompt=human_prompt
+        )
+        
+        # Remove thinking part if present
+        improved_summary = parse_output(improved_summary_result)["response"]
+        
+        # Validate the improved summary - if it's empty or too short, use the initial summary
+        if not improved_summary or len(improved_summary) < 50:
+            print(f"Document '{query}': Improved summary is too short or empty, using initial summary")
+            improved_summary = initial_summary
+        else:
+            print(f"Document '{query}': Summary successfully improved (iteration {iterations}/{quality_check_loops})")
     
-    # Using external LLM providers with OpenRouter: GPT-4o, Claude, Deepseek R1,... 
-    # improved_summary = invoke_llm(
-    #     model='gpt-4o-mini',
-    #     system_prompt="You are an expert summarizer. Improve the summary based on the feedback provided.",
-    #     user_prompt=improvement_prompt
-    # )
-    
-    # Remove thinking part if present
-    improved_summary = parse_output(improved_summary)["response"]
-    
-    print(f"Document '{query}': Summary improved (iteration {iterations}/{quality_check_loops})")
+    except Exception as e:
+        print(f"Document '{query}': Error improving summary: {str(e)}, using initial summary")
+        improved_summary = initial_summary
     
     # Return the improved summary and the updated iteration count
+    # Always ensure we have a non-empty search_summaries list
     return {
-        "search_summaries": [improved_summary],
+        "improved_summaries": [improved_summary],
         "summary_improvement_iterations": iterations
     }
 
@@ -422,25 +488,31 @@ def filter_search_summaries(state: ResearcherState, config: RunnableConfig):
     """Filter out irrelevant search summaries with a simpler approach"""
     print("--- Filtering search summaries ---")
     user_instructions = state["user_instructions"]
-    search_summaries = state.get("search_summaries", [])
+    
+    # Get improved summaries, with fallback to search_summaries if improved_summaries is empty
+    improved_summaries = state.get("improved_summaries", [])
+    if not improved_summaries:
+        print("  [DEBUG] No improved summaries found, falling back to search_summaries")
+        improved_summaries = state.get("search_summaries", [])
+        
     llm_model = config["configurable"].get("llm_model", "deepseek-r1:latest")
     detected_language = state.get("detected_language", "English")
     print(f"  [Using language: {detected_language}]")
     
     # Debug logging to check if summaries are being received
-    print(f"  [DEBUG] Number of search summaries received: {len(search_summaries)}")
-    if search_summaries:
-        print(f"  [DEBUG] First few characters of first summary: {search_summaries[0][:100] if search_summaries[0] else 'Empty summary'}...")
+    print(f"  [DEBUG] Number of improved summaries received: {len(improved_summaries)}")
+    if improved_summaries:
+        print(f"  [DEBUG] First few characters of first summary: {improved_summaries[0][:100] if improved_summaries[0] else 'Empty summary'}...")
     
     # If there are no summaries, return empty filtered summaries
-    if not search_summaries:
+    if not improved_summaries:
         return {"filtered_summaries": []}
     
     # Keep track of filtered summaries
     filtered_summaries = []
     
     # Process each summary
-    for summary in search_summaries:
+    for summary in improved_summaries:
         # Skip empty summaries
         if not summary or len(summary.strip()) < 50:
             continue
@@ -454,7 +526,10 @@ def filter_search_summaries(state: ResearcherState, config: RunnableConfig):
             "does not provide",
             "doesn't provide",
             "not related",
-            "no direct information"
+            "no direct information",
+            "keine relevanten Informationen",
+            "keine relevanten",
+            "kein Bezug"
         ]
         
         # Check if the summary contains any irrelevance indicators
@@ -474,12 +549,12 @@ def filter_search_summaries(state: ResearcherState, config: RunnableConfig):
     print(f"  [DEBUG] Minimum summaries to keep: {min_summaries_to_keep}")
     
     # If we have fewer filtered summaries than the minimum required, add back some of the filtered out ones
-    if len(filtered_summaries) < min_summaries_to_keep and len(search_summaries) > len(filtered_summaries):
+    if len(filtered_summaries) < min_summaries_to_keep and len(improved_summaries) > len(filtered_summaries):
         print(f"  [DEBUG] Not enough relevant summaries, adding back some filtered ones")
         
         # Create a list of summaries that were filtered out
         filtered_out_summaries = []
-        for summary in search_summaries:
+        for summary in improved_summaries:
             if summary and len(summary.strip()) >= 50 and summary not in filtered_summaries:
                 filtered_out_summaries.append(summary)
         
@@ -496,7 +571,7 @@ def filter_search_summaries(state: ResearcherState, config: RunnableConfig):
         filtered_summaries = [placeholder]
         print(f"  [DEBUG] Using placeholder summary")
     
-    print(f"Filtered {len(search_summaries)} summaries to {len(filtered_summaries)} relevant ones")
+    print(f"Filtered {len(improved_summaries)} summaries to {len(filtered_summaries)} relevant ones")
     
     return {"filtered_summaries": filtered_summaries}
 
@@ -544,7 +619,7 @@ def rank_search_summaries(state: ResearcherState, config: RunnableConfig):
         formatted_summaries += f"\n\nSummary {i+1}:\n{summary}"
         
     ranking_prompt = RANKING_SYSTEM_PROMPT.format(
-        detected_language=detected_language,
+        language=detected_language,
         user_instructions=user_instructions,
         summaries=formatted_summaries
     )
@@ -586,12 +661,14 @@ def generate_final_answer(state: ResearcherState, config: RunnableConfig):
     
     # Get all types of summaries from state for debugging
     search_summaries = state.get("search_summaries", [])
+    improved_summaries = state.get("improved_summaries", [])
     filtered_summaries = state.get("filtered_summaries", [])
     ranked_summaries = state.get("ranked_summaries", [])
     
     # Comprehensive debug information to help diagnose issues
     print(f"  [DEBUG] State of summaries at final answer generation:")
     print(f"  [DEBUG] - Search summaries: {len(search_summaries)}")
+    print(f"  [DEBUG] - Improved summaries: {len(improved_summaries)}")
     print(f"  [DEBUG] - Filtered summaries: {len(filtered_summaries)}")
     print(f"  [DEBUG] - Ranked summaries: {len(ranked_summaries)}")
     
@@ -612,25 +689,31 @@ def generate_final_answer(state: ResearcherState, config: RunnableConfig):
     4. Conclusion
     """
     
-    # Combine the information from the ranked summaries
+    # Combine the information from the ranked summaries - this is the primary source
     if ranked_summaries and len(ranked_summaries) > 0:
         combined_information = "\n\n".join([summary for summary in ranked_summaries])
-        print(f"  [Combined information length: {len(combined_information)} characters]")
+        print(f"  [Using ranked summaries: {len(ranked_summaries)} summaries, {len(combined_information)} characters]")
     else:
-        # If no ranked summaries, try to get filtered summaries as a fallback
+        # If no ranked summaries, try to get filtered summaries as first fallback
         filtered_summaries = state.get("filtered_summaries", [])
         if filtered_summaries and len(filtered_summaries) > 0:
             print(f"  [No ranked summaries found, using {len(filtered_summaries)} filtered summaries as fallback]")
             combined_information = "\n\n".join([summary for summary in filtered_summaries])
         else:
-            # If no filtered summaries either, try to get raw search summaries as a last resort
-            search_summaries = state.get("search_summaries", [])
-            if search_summaries and len(search_summaries) > 0:
-                print(f"  [No ranked or filtered summaries found, using {len(search_summaries)} raw search summaries as fallback]")
-                combined_information = "\n\n".join([summary for summary in search_summaries])
+            # If no filtered summaries, try to get improved summaries as second fallback
+            improved_summaries = state.get("improved_summaries", [])
+            if improved_summaries and len(improved_summaries) > 0:
+                print(f"  [No ranked or filtered summaries found, using {len(improved_summaries)} improved summaries as fallback]")
+                combined_information = "\n\n".join([summary for summary in improved_summaries])
             else:
-                print("  [WARNING: No summaries found at all!]")
-                combined_information = f"No relevant information was found for the query: {user_instructions}"
+                # If no improved summaries, try to get raw search summaries as last resort
+                search_summaries = state.get("search_summaries", [])
+                if search_summaries and len(search_summaries) > 0:
+                    print(f"  [No ranked, filtered, or improved summaries found, using {len(search_summaries)} raw search summaries as last resort]")
+                    combined_information = "\n\n".join([summary for summary in search_summaries])
+                else:
+                    print("  [WARNING: No summaries found at all!]")
+                    combined_information = f"No relevant information was found for the query: {user_instructions}"
     
     # Print a sample of the combined information to help with debugging
     if len(combined_information) > 200:
@@ -664,15 +747,35 @@ def generate_final_answer(state: ResearcherState, config: RunnableConfig):
     return {"final_answer": final_answer}
 
 def quality_check_summary(state: QuerySearchState, config: RunnableConfig):
-    """Simple quality check to ensure the summary contains sufficient information."""
+    """Quality check to ensure the summary contains sufficient information."""
     print("--- Quality checking summary ---")
     query = state["query"]
+    
+    # Ensure we have a summary to check
+    if not state.get("search_summaries") or not state["search_summaries"][0]:
+        print(f"Document '{query}': No summary to check, skipping quality check")
+        # Return default quality check results indicating no improvement needed
+        return {
+            "quality_check_results": {
+                "quality_score": 7.0,  # Acceptable score
+                "is_accurate": True,
+                "is_complete": True,
+                "issues_found": [],
+                "missing_elements": [],
+                "citation_issues": [],
+                "improvement_needed": False,
+                "improvement_suggestions": "No summary to check."
+            }
+        }
+    
+    # Get the current summary to check
     current_summary = state["search_summaries"][0]
-    # Use the summarization LLM model for quality checking as well
-    summarization_llm = config["configurable"].get("summarization_llm", "llama3.2")
-    detected_language = state.get("detected_language", config["configurable"].get("detected_language", "en"))
-    quality_check_loops = config["configurable"].get("quality_check_loops", 1)  # Get configured loop count
-    print(f"  [Using summarization LLM for quality check: {summarization_llm}]")
+    
+    # Use the summarization LLM model for quality checking
+    report_llm = config["configurable"].get("report_llm", "llama3.2")
+    detected_language = state.get("detected_language", config["configurable"].get("detected_language", "English"))
+    quality_check_loops = config["configurable"].get("quality_check_loops", 1)
+    print(f"  [Using summarization LLM for quality check: {report_llm}]")
     
     # Get the source documents
     information = None
@@ -684,12 +787,16 @@ def quality_check_summary(state: QuerySearchState, config: RunnableConfig):
     # Format documents with metadata
     formatted_information = format_documents_with_metadata(information) if state["are_documents_relevant"] else information
     
-    # Format the system prompt
+    # Get current iteration for this document
+    iterations = state.get("summary_improvement_iterations", 0)
+    print(f"Document '{query}': Quality check iteration {iterations + 1}/{quality_check_loops}")
+    
+    # Format the system prompt with the detected language
     system_prompt = QUALITY_CHECKER_SYSTEM_PROMPT.format(
         language=detected_language
     )
     
-    # Format the human prompt
+    # Format the human prompt with the detected language
     human_prompt = QUALITY_CHECKER_HUMAN_PROMPT.format(
         summary=current_summary,
         documents=formatted_information,
@@ -697,15 +804,6 @@ def quality_check_summary(state: QuerySearchState, config: RunnableConfig):
     )
     
     try:
-        # Initialize quality check results
-        quality_check = None
-        
-        # Get current iteration for this document
-        iterations = state.get("summary_improvement_iterations", 0)
-        
-        # Perform quality check for this document
-        print(f"Document '{query}': Quality check iteration {iterations + 1}/{quality_check_loops}")
-        
         # Using the configured summarization LLM model with Ollama
         quality_check = invoke_ollama(
             model=summarization_llm,
@@ -714,14 +812,21 @@ def quality_check_summary(state: QuerySearchState, config: RunnableConfig):
             output_format=QualityCheckResult
         )
         
-        # Log quality results
+        # Extract quality metrics
         quality_score = quality_check.quality_score
-        is_sufficient = quality_check.is_accurate and quality_check.is_complete  # Determine if sufficient based on accuracy and completeness
+        is_sufficient = quality_check.is_accurate and quality_check.is_complete
         improvement_needed = quality_check.improvement_needed
         
+        # Log quality results
         print(f"Document '{query}': Summary quality score: {quality_score}")
         print(f"Document '{query}': Is summary sufficient: {is_sufficient}")
         print(f"Document '{query}': Improvement needed: {improvement_needed}")
+        
+        # If the quality is very high (score > 8), we can override improvement_needed to false
+        # This ensures we don't waste time improving already good summaries
+        if quality_score > 8 and improvement_needed:
+            print(f"Document '{query}': Quality score is high ({quality_score}), overriding improvement_needed to false")
+            quality_check.improvement_needed = False
         
         return {"quality_check_results": quality_check.dict()}
         
@@ -729,16 +834,16 @@ def quality_check_summary(state: QuerySearchState, config: RunnableConfig):
         print(f"Error during quality check for document '{query}': {str(e)}")
         # Default quality check results in case of error
         default_results = {
-            "quality_score": 0.7,  # Medium quality score
-            "is_accurate": True,  # Assume accurate
-            "is_complete": True,  # Assume complete
+            "quality_score": 7.0,  # Acceptable score
+            "is_accurate": True,
+            "is_complete": True,
             "issues_found": [],
             "missing_elements": [],
             "citation_issues": [],
-            "improvement_needed": False,
-            "improvement_suggestions": "No specific suggestions due to error in quality check."
+            "improvement_needed": False,  # No improvement needed by default
+            "improvement_suggestions": "Error during quality check, using default results."
         }
-        print(f"Document '{query}': Proceeding with summary improvement using quality feedback. Quality score: {default_results['quality_score']}, Sufficient: {default_results['is_accurate'] and default_results['is_complete']}")
+        print(f"Document '{query}': Using default quality check results")
         return {"quality_check_results": default_results}
 
 # Create subghraph for searching each query

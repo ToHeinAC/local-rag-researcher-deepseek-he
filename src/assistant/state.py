@@ -6,6 +6,7 @@ class ResearcherState(TypedDict):
     user_instructions: str
     research_queries: list[str]
     search_summaries: Annotated[list, operator.add]
+    improved_summaries: Annotated[list, operator.add]
     filtered_summaries: Annotated[list, operator.add]
     ranked_summaries: list
     relevance_scores: list

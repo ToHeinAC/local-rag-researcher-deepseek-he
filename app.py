@@ -267,6 +267,8 @@ def generate_response(user_input, enable_web_search, report_structure, max_searc
         "enable_quality_checker": enable_quality_checker,
         "quality_check_loops": quality_check_loops,
         "k_results": k_results,  # Number of results to retrieve for each query
+        # Don't pass selected_language to force language detection in the graph
+        # This ensures the language is detected from the user's query
     }}
 
     # Start timing the workflow
@@ -292,11 +294,15 @@ def generate_response(user_input, enable_web_search, report_structure, max_searc
                 st.info(f"**Embedding Model:** {embedding_model_name}")
                 
                 # Get embedding model and update the Configuration to use this embedding model
-                embed_model = get_embedding_model(embedding_model_name)
-                
-                # Update the global configuration to use this embedding model
-                from src.assistant.configuration import update_embedding_model
-                update_embedding_model(embedding_model_name)
+                if embedding_model_name:
+                    embed_model = get_embedding_model(embedding_model_name)
+                    
+                    # Update the global configuration to use this embedding model
+                    from src.assistant.configuration import update_embedding_model
+                    update_embedding_model(embedding_model_name)
+                    
+                    # Print confirmation of embedding model update
+                    st.write(f"✅ Updated embedding model to: {embedding_model_name}")
                 
                 # Get tenant ID from the database directory
                 database_path = os.path.join(DATABASE_PATH, selected_database)
@@ -313,6 +319,15 @@ def generate_response(user_input, enable_web_search, report_structure, max_searc
                     # Perform similarity search
                     st.write("### Retrieving Documents")
                     with st.spinner("Performing similarity search..."):
+                        # Detect language for the query first
+                        from src.assistant.graph import detect_language
+                        language_result = detect_language({"user_instructions": user_input}, {"configurable": {"llm_model": report_llm}})
+                        detected_language = language_result.get("detected_language", "English")
+                        
+                        # Print detected language
+                        st.write(f"ℹ️ Detected language: **{detected_language}**")
+                        
+                        # Pass the detected language to the similarity search
                         results = similarity_search_for_tenant(
                             tenant_id=tenant_id,
                             embed_llm=embed_model,
@@ -320,7 +335,8 @@ def generate_response(user_input, enable_web_search, report_structure, max_searc
                             similarity="cosine",
                             normal=True,
                             query=user_input,
-                            k=k_results
+                            k=k_results,
+                            language=detected_language  # Pass the detected language
                         )
                     
                     # Transform documents
@@ -335,11 +351,9 @@ def generate_response(user_input, enable_web_search, report_structure, max_searc
                             st.write(f"**Path:** {doc.metadata.get('path', 'Unknown')}")
                             st.write(f"**Content:**\n{doc.page_content}")
                     
-                    # Detect language for summarization
-                    # Initialize language detection using the researcher graph's detect_language function
-                    from src.assistant.graph import detect_language
-                    language_result = detect_language({"user_instructions": user_input}, {"configurable": {"llm_model": report_llm}})
-                    detected_language = language_result.get("detected_language", "en")
+                    # We already detected the language above, reuse it for summarization
+                    # Make sure detected_language is set to the correct value (not 'en' but 'English')
+                    detected_language = language_result.get("detected_language", "English")
                     
                     # Summarize the results using the summarization LLM
                     st.subheader("Document Summary")
@@ -374,6 +388,17 @@ def generate_response(user_input, enable_web_search, report_structure, max_searc
             # Display embedding model information
             from src.assistant.configuration import get_config_instance
             embedding_model = get_config_instance().embedding_model
+            
+            # If we're using an external database with a specific embedding model, make sure it's displayed correctly
+            if use_ext_database and selected_database and 'embedding_model_name' in locals() and embedding_model_name:
+                # Check if the configuration's embedding model matches what we expect from the database
+                if embedding_model != embedding_model_name:
+                    st.warning(f"⚠️ Configuration embedding model ({embedding_model}) doesn't match database embedding model ({embedding_model_name}). Using database model.")
+                    # Force update the embedding model again to ensure it's correct
+                    from src.assistant.configuration import update_embedding_model
+                    update_embedding_model(embedding_model_name)
+                    embedding_model = embedding_model_name
+            
             st.info(f"**Embedding Model:** {embedding_model}")
             
             # Display the mermaid diagram
@@ -590,6 +615,11 @@ def main():
         value=st.session_state.max_search_queries,
         help="Set the maximum number of search queries to be made. (1-10)"
     )
+    
+    # Language will be automatically detected from the user's query
+    # Remove the language selection dropdown to ensure automatic detection
+    if "selected_language" not in st.session_state:
+        st.session_state.selected_language = None  # Set to None to force language detection
     
     # Enable web search checkbox
     st.session_state.enable_web_search = st.sidebar.checkbox("Enable Web Search", value=st.session_state.enable_web_search)

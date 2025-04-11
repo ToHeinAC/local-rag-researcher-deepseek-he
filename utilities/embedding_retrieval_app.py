@@ -257,6 +257,10 @@ with tab3:
                 # Get embedding model
                 embed_model = get_embedding_model(st.session_state.embedding_model)
                 
+                # Store the selected language in session state for the graph workflow
+                # This needs to happen BEFORE the retrieval to ensure correct language detection
+                st.session_state.selected_language = selected_language
+                
                 # Perform similarity search
                 results = similarity_search_for_tenant(
                     tenant_id=st.session_state.tenant_id,
@@ -265,7 +269,8 @@ with tab3:
                     similarity="cosine",
                     normal=True,
                     query=query,
-                    k=k_results
+                    k=k_results,
+                    language=selected_language  # Pass the selected language to the retrieval function
                 )
 
                 transformed_results = transform_documents(results)
@@ -293,7 +298,16 @@ with tab3:
                 st.subheader(f"Summary (in {selected_language})")
                 with st.spinner(f"Generating summary using {selected_llm} in {selected_language}..."):
                     start_time = time.time()
-                    summary = source_summarizer_ollama(query, transformed_results, selected_language, SUMMARIZER_SYSTEM_PROMPT, selected_llm)
+                    
+                    # Store the selected language in session state for the graph workflow
+                    if 'summary_language' in st.session_state:
+                        st.session_state.selected_language = selected_language
+                    
+                    # Format the system prompt with the selected language
+                    formatted_system_prompt = SUMMARIZER_SYSTEM_PROMPT.format(language=selected_language)
+                    
+                    # Pass the selected language to the summarizer
+                    summary = source_summarizer_ollama(query, transformed_results, selected_language, formatted_system_prompt, selected_llm)
                     end_time = time.time()
                     
                     st.markdown(summary["content"])
