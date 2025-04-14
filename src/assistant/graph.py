@@ -354,11 +354,28 @@ def route_after_summarization(state: QuerySearchState, config: RunnableConfig) -
     """Route based on whether quality checking is enabled."""
     enable_quality_checker = config["configurable"].get("enable_quality_checker", True)
     
+    # Ensure that we always have search_summaries available
+    search_summaries = state.get("search_summaries", [])
+    
+    # If quality checking is enabled, proceed to quality check
     if enable_quality_checker:
         print("Quality checker is enabled, proceeding to quality check")
         return "quality_check_summary"
     else:
         print("Quality checker is disabled, skipping quality check")
+        # If quality checking is disabled, we need to initialize improved_summaries
+        # to ensure proper data flow
+        state["improved_summaries"] = search_summaries.copy() if isinstance(search_summaries, list) else [search_summaries]
+        state["quality_check_results"] = {
+            "quality_score": 7.0,  # Acceptable score
+            "is_accurate": True,
+            "is_complete": True,
+            "issues_found": [],
+            "missing_elements": [],
+            "citation_issues": [],
+            "improvement_needed": False,
+            "improvement_suggestions": "Quality check skipped."
+        }
         return "__end__"
 
 def route_quality_check(state: QuerySearchState, config: RunnableConfig) -> Literal["improve_summary", "__end__"]:
@@ -390,6 +407,14 @@ def route_quality_check(state: QuerySearchState, config: RunnableConfig) -> Lite
             print(f"Document '{state['query']}': No improvement needed")
         else:
             print(f"Document '{state['query']}': Reached maximum improvement iterations ({quality_check_loops})")
+            
+        # Initialize improved_summaries from search_summaries if they don't exist yet
+        # This ensures proper data flow when no improvement is performed
+        if not state.get("improved_summaries"):
+            search_summaries = state.get("search_summaries", [])
+            state["improved_summaries"] = search_summaries.copy() if isinstance(search_summaries, list) else [search_summaries]
+            print(f"Document '{state['query']}': Initialized improved_summaries from search_summaries for data flow")
+            
         return "__end__"
 
 def improve_summary(state: QuerySearchState, config: RunnableConfig):
@@ -397,9 +422,9 @@ def improve_summary(state: QuerySearchState, config: RunnableConfig):
     print("--- Improving summary based on quality check ---")
     query = state["query"]
     
-    # Get the initial summary - this is crucial to ensure we always have a summary to return
+    # Get the initial summary from search_summaries - this is crucial to ensure we always have a summary to return
     assert state["search_summaries"] != []
-    initial_summary = state["search_summaries"]
+    initial_summary = state["search_summaries"][0] if isinstance(state["search_summaries"], list) else state["search_summaries"]
     
     # Get quality check results and other configuration
     quality_check_results = state["quality_check_results"]
@@ -457,6 +482,7 @@ def improve_summary(state: QuerySearchState, config: RunnableConfig):
     
     try:
         # Using local model with Ollama
+        report_writer_llm = config["configurable"].get("report_llm", "deepseek-r1:latest")
         improved_summary_result = invoke_ollama(
             model=report_writer_llm,
             system_prompt=system_prompt,
@@ -477,11 +503,12 @@ def improve_summary(state: QuerySearchState, config: RunnableConfig):
         print(f"Document '{query}': Error improving summary: {str(e)}, using initial summary")
         improved_summary = initial_summary
     
-    # Return the improved summary and the updated iteration count
-    # Always ensure we have a non-empty search_summaries list
+    # Return the improved summary, the updated iteration count, and preserve the original search_summaries
+    # Always ensure we have a non-empty improved_summaries list
     return {
         "improved_summaries": [improved_summary],
-        "summary_improvement_iterations": iterations
+        "summary_improvement_iterations": iterations,
+        "search_summaries": state["search_summaries"]  # Preserve search_summaries in state
     }
 
 def filter_search_summaries(state: ResearcherState, config: RunnableConfig):
@@ -494,6 +521,9 @@ def filter_search_summaries(state: ResearcherState, config: RunnableConfig):
     if not improved_summaries:
         print("  [DEBUG] No improved summaries found, falling back to search_summaries")
         improved_summaries = state.get("search_summaries", [])
+        # If we're using the fallback, make sure to update the state with improved_summaries
+        # to maintain the information flow
+        state["improved_summaries"] = improved_summaries
         
     llm_model = config["configurable"].get("llm_model", "deepseek-r1:latest")
     detected_language = state.get("detected_language", "English")
@@ -506,7 +536,8 @@ def filter_search_summaries(state: ResearcherState, config: RunnableConfig):
     
     # If there are no summaries, return empty filtered summaries
     if not improved_summaries:
-        return {"filtered_summaries": []}
+        placeholder = f"No relevant information was found for the query: {user_instructions}"
+        return {"filtered_summaries": [placeholder], "improved_summaries": [placeholder]}
     
     # Keep track of filtered summaries
     filtered_summaries = []
@@ -573,7 +604,11 @@ def filter_search_summaries(state: ResearcherState, config: RunnableConfig):
     
     print(f"Filtered {len(improved_summaries)} summaries to {len(filtered_summaries)} relevant ones")
     
-    return {"filtered_summaries": filtered_summaries}
+    # Return both filtered_summaries and improved_summaries to maintain state
+    return {
+        "filtered_summaries": filtered_summaries,
+        "improved_summaries": improved_summaries  # Ensure improved_summaries is preserved in state
+    }
 
 def rank_search_summaries(state: ResearcherState, config: RunnableConfig):
     """Simplified ranking of search summaries by relevance"""
@@ -589,12 +624,33 @@ def rank_search_summaries(state: ResearcherState, config: RunnableConfig):
     if filtered_summaries:
         print(f"  [DEBUG] First few characters of first filtered summary: {filtered_summaries[0][:100] if filtered_summaries[0] else 'Empty summary'}...")
     
-    # If there are no filtered summaries, return empty rankings
+    # If there are no filtered summaries, check if we have improved summaries to use as fallback
     if not filtered_summaries:
-        print("  [DEBUG] No filtered summaries to rank")
+        improved_summaries = state.get("improved_summaries", [])
+        if improved_summaries:
+            print("  [DEBUG] No filtered summaries found, falling back to improved_summaries")
+            filtered_summaries = improved_summaries
+            # Update state to maintain information flow
+            state["filtered_summaries"] = filtered_summaries
+        else:
+            # If no improved summaries either, check for search_summaries
+            search_summaries = state.get("search_summaries", [])
+            if search_summaries:
+                print("  [DEBUG] No filtered or improved summaries found, falling back to search_summaries")
+                filtered_summaries = search_summaries
+                # Update state to maintain information flow
+                state["filtered_summaries"] = filtered_summaries
+                state["improved_summaries"] = search_summaries
+    
+    # If there are still no summaries after fallbacks, return empty rankings
+    if not filtered_summaries:
+        print("  [DEBUG] No summaries available after all fallbacks")
+        placeholder = f"No relevant information was found for the query: {user_instructions}"
         return {
-            "ranked_summaries": [],
-            "relevance_scores": []
+            "ranked_summaries": [placeholder],
+            "relevance_scores": [1.0],
+            "filtered_summaries": [placeholder],
+            "improved_summaries": [placeholder]
         }
         
     # If there's only a placeholder summary, use it but don't try to rank it
@@ -602,14 +658,18 @@ def rank_search_summaries(state: ResearcherState, config: RunnableConfig):
         print("  [DEBUG] Only have placeholder summary, using as is")
         return {
             "ranked_summaries": filtered_summaries,
-            "relevance_scores": [1.0]
+            "relevance_scores": [1.0],
+            "filtered_summaries": filtered_summaries,  # Preserve filtered_summaries in state
+            "improved_summaries": state.get("improved_summaries", filtered_summaries)  # Preserve improved_summaries in state
         }
     
     # If there's only one summary, return it as is
     if len(filtered_summaries) == 1:
         return {
             "ranked_summaries": filtered_summaries,
-            "relevance_scores": [1.0]
+            "relevance_scores": [1.0],
+            "filtered_summaries": filtered_summaries,  # Preserve filtered_summaries in state
+            "improved_summaries": state.get("improved_summaries", filtered_summaries)  # Preserve improved_summaries in state
         }
     
     # For multiple summaries, use the LLM to rank them
@@ -640,9 +700,23 @@ def rank_search_summaries(state: ResearcherState, config: RunnableConfig):
         # Sort the rankings by relevance score (descending)
         sorted_rankings = sorted(rankings.rankings, key=lambda x: x.relevance_score, reverse=True)
         
-        # Extract the ranked summaries and scores
-        ranked_summaries = [filtered_summaries[r.summary_index] for r in sorted_rankings]
-        relevance_scores = [r.relevance_score for r in sorted_rankings]
+        # Validate summary_index to ensure it's within bounds
+        valid_rankings = []
+        for ranking in sorted_rankings:
+            if 0 <= ranking.summary_index < len(filtered_summaries):
+                valid_rankings.append(ranking)
+            else:
+                print(f"  [DEBUG] Skipping invalid summary_index {ranking.summary_index} (out of range 0-{len(filtered_summaries)-1})")
+        
+        # If we have valid rankings, use them; otherwise fallback to using all filtered summaries in original order
+        if valid_rankings:
+            # Extract the ranked summaries and scores from valid rankings
+            ranked_summaries = [filtered_summaries[r.summary_index] for r in valid_rankings]
+            relevance_scores = [r.relevance_score for r in valid_rankings]
+        else:
+            print("  [DEBUG] No valid rankings found, using original order")
+            ranked_summaries = filtered_summaries
+            relevance_scores = [1.0] * len(filtered_summaries)
         
     except Exception as e:
         print(f"Error ranking summaries: {str(e)}")
@@ -652,7 +726,8 @@ def rank_search_summaries(state: ResearcherState, config: RunnableConfig):
     
     return {
         "ranked_summaries": ranked_summaries,
-        "relevance_scores": relevance_scores
+        "relevance_scores": relevance_scores,
+        "filtered_summaries": filtered_summaries  # Ensure filtered_summaries is preserved in state
     }
 
 def generate_final_answer(state: ResearcherState, config: RunnableConfig):
@@ -689,31 +764,43 @@ def generate_final_answer(state: ResearcherState, config: RunnableConfig):
     4. Conclusion
     """
     
-    # Combine the information from the ranked summaries - this is the primary source
+    # Primary source is ranked_summaries according to the new information flow
     if ranked_summaries and len(ranked_summaries) > 0:
         combined_information = "\n\n".join([summary for summary in ranked_summaries])
         print(f"  [Using ranked summaries: {len(ranked_summaries)} summaries, {len(combined_information)} characters]")
     else:
         # If no ranked summaries, try to get filtered summaries as first fallback
-        filtered_summaries = state.get("filtered_summaries", [])
         if filtered_summaries and len(filtered_summaries) > 0:
             print(f"  [No ranked summaries found, using {len(filtered_summaries)} filtered summaries as fallback]")
             combined_information = "\n\n".join([summary for summary in filtered_summaries])
+            # Update state to maintain information flow
+            state["ranked_summaries"] = filtered_summaries
         else:
             # If no filtered summaries, try to get improved summaries as second fallback
-            improved_summaries = state.get("improved_summaries", [])
             if improved_summaries and len(improved_summaries) > 0:
                 print(f"  [No ranked or filtered summaries found, using {len(improved_summaries)} improved summaries as fallback]")
                 combined_information = "\n\n".join([summary for summary in improved_summaries])
+                # Update state to maintain information flow
+                state["ranked_summaries"] = improved_summaries
+                state["filtered_summaries"] = improved_summaries
             else:
                 # If no improved summaries, try to get raw search summaries as last resort
-                search_summaries = state.get("search_summaries", [])
                 if search_summaries and len(search_summaries) > 0:
                     print(f"  [No ranked, filtered, or improved summaries found, using {len(search_summaries)} raw search summaries as last resort]")
                     combined_information = "\n\n".join([summary for summary in search_summaries])
+                    # Update state to maintain information flow
+                    state["ranked_summaries"] = search_summaries
+                    state["filtered_summaries"] = search_summaries
+                    state["improved_summaries"] = search_summaries
                 else:
                     print("  [WARNING: No summaries found at all!]")
-                    combined_information = f"No relevant information was found for the query: {user_instructions}"
+                    placeholder = f"No relevant information was found for the query: {user_instructions}"
+                    combined_information = placeholder
+                    # Update state to maintain information flow
+                    state["ranked_summaries"] = [placeholder]
+                    state["filtered_summaries"] = [placeholder]
+                    state["improved_summaries"] = [placeholder]
+                    state["search_summaries"] = [placeholder]
     
     # Print a sample of the combined information to help with debugging
     if len(combined_information) > 200:
@@ -772,10 +859,10 @@ def quality_check_summary(state: QuerySearchState, config: RunnableConfig):
     current_summary = state["search_summaries"][0]
     
     # Use the summarization LLM model for quality checking
-    report_llm = config["configurable"].get("report_llm", "llama3.2")
+    summarization_llm = config["configurable"].get("summarization_llm", "llama3.2")
     detected_language = state.get("detected_language", config["configurable"].get("detected_language", "English"))
     quality_check_loops = config["configurable"].get("quality_check_loops", 1)
-    print(f"  [Using summarization LLM for quality check: {report_llm}]")
+    print(f"  [Using summarization LLM for quality check: {summarization_llm}]")
     
     # Get the source documents
     information = None
@@ -828,7 +915,11 @@ def quality_check_summary(state: QuerySearchState, config: RunnableConfig):
             print(f"Document '{query}': Quality score is high ({quality_score}), overriding improvement_needed to false")
             quality_check.improvement_needed = False
         
-        return {"quality_check_results": quality_check.dict()}
+        # Return both the quality check results and the search_summaries to maintain state
+        return {
+            "quality_check_results": quality_check.dict(),
+            "search_summaries": state["search_summaries"]  # Preserve search_summaries in state
+        }
         
     except Exception as e:
         print(f"Error during quality check for document '{query}': {str(e)}")
@@ -844,7 +935,11 @@ def quality_check_summary(state: QuerySearchState, config: RunnableConfig):
             "improvement_suggestions": "Error during quality check, using default results."
         }
         print(f"Document '{query}': Using default quality check results")
-        return {"quality_check_results": default_results}
+        # Return both the default quality check results and the search_summaries to maintain state
+        return {
+            "quality_check_results": default_results,
+            "search_summaries": state["search_summaries"]  # Preserve search_summaries in state
+        }
 
 # Create subghraph for searching each query
 query_search_subgraph = StateGraph(QuerySearchState, input=QuerySearchStateInput, output=QuerySearchStateOutput)
@@ -878,7 +973,13 @@ def collect_search_summaries(state: ResearcherState):
         print("  [WARNING] No search summaries found, creating placeholder")
         user_instructions = state["user_instructions"]
         placeholder = f"No relevant information was found for the query: {user_instructions}"
-        return {"search_summaries": [placeholder]}
+        # Initialize all summary states with the placeholder to maintain information flow
+        return {
+            "search_summaries": [placeholder],
+            "improved_summaries": [placeholder],  # Initialize improved_summaries
+            "filtered_summaries": [placeholder],  # Initialize filtered_summaries
+            "ranked_summaries": [placeholder]     # Initialize ranked_summaries
+        }
     
     # Print a sample of the summaries for debugging
     for i, summary in enumerate(current_summaries):
@@ -887,9 +988,24 @@ def collect_search_summaries(state: ResearcherState):
         else:
             print(f"  [DEBUG] Summary {i+1} is empty or None")
     
-    # Explicitly return the summaries to ensure they're passed to the next step
-    # The operator.add annotation in ResearcherState will handle merging
-    return {"search_summaries": current_summaries}
+    # Create a dictionary with properly formatted keys for the UI
+    # The UI looks for keys that start with 'search_and_summarize_query'
+    result = {}
+    for i, summary in enumerate(current_summaries):
+        if summary:
+            # Format the key to match what the UI expects
+            key = f"search_and_summarize_query_{i+1}"
+            result[key] = summary
+    
+    # Set all summary states to maintain information flow
+    # This ensures that search_summaries is available for the next steps
+    result["search_summaries"] = current_summaries
+    
+    # Initialize improved_summaries with search_summaries to ensure data flow
+    # This will be overwritten by improve_summary if that node runs
+    result["improved_summaries"] = current_summaries.copy()
+    
+    return result
 
 # Create main research agent graph
 researcher_graph = StateGraph(ResearcherState, input=ResearcherStateInput, output=ResearcherStateOutput, config_schema=Configuration)

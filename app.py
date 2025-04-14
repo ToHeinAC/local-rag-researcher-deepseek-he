@@ -493,8 +493,18 @@ def generate_response(user_input, enable_web_search, report_structure, max_searc
         # Update status to complete
         langgraph_status.update(state="complete", label="**Research Completed**")
         
-        # Return the final report
-        return steps[-1]["content"] if steps else "No response generated"
+        # Return both the final answer and the complete workflow state
+        if steps:
+            final_answer = steps[-1]["content"]
+            return {
+                "final_answer": final_answer,
+                "steps": steps  # Include all steps for debugging
+            }
+        else:
+            return {
+                "final_answer": "No response generated",
+                "steps": []
+            }
     
     finally:
         # Final update of elapsed time
@@ -747,12 +757,22 @@ def main():
             st.session_state.k_results
         )
 
-        # Store assistant message
-        st.session_state.messages.append({"role": "assistant", "content": assistant_response})
+        # Store assistant message - only store the final answer part for the chat history
+        st.session_state.messages.append({"role": "assistant", "content": assistant_response["final_answer"] if isinstance(assistant_response, dict) and "final_answer" in assistant_response else assistant_response})
 
         with st.chat_message("assistant"):
             try:
+                # Display the final answer
                 st.markdown(assistant_response['final_answer'], unsafe_allow_html=False)  # Use markdown for proper rendering
+                
+                # Add an expander to display the final state
+                with st.expander("🔍 Debug: Final Workflow State", expanded=False):
+                    # If assistant_response is a dict with steps, display it nicely
+                    if isinstance(assistant_response, dict) and 'steps' in assistant_response:
+                        st.json(assistant_response['steps'])
+                    else:
+                        # Otherwise display the entire response
+                        st.json(assistant_response)
             except:
                 st.markdown(assistant_response, unsafe_allow_html=False)
 
