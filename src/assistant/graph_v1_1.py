@@ -236,96 +236,22 @@ def generate_final_answer(state: ResearcherState, config: RunnableConfig):
     
     return {"final_answer": final_answer}
 
-# Create subghraph for searching each query
-query_search_subgraph = StateGraph(QuerySearchState, input=QuerySearchStateInput, output=QuerySearchStateOutput)
-
-# Define subgraph nodes for searching the query
-query_search_subgraph.add_node(retrieve_rag_documents)
-query_search_subgraph.add_node(evaluate_retrieved_documents)
-query_search_subgraph.add_node(web_research)
-query_search_subgraph.add_node(summarize_query_research)
-query_search_subgraph.add_node(quality_check_summary)
-query_search_subgraph.add_node(improve_summary)
-
-# Set entry point and define transitions for the subgraph
-query_search_subgraph.add_edge(START, "retrieve_rag_documents")
-query_search_subgraph.add_edge("retrieve_rag_documents", "evaluate_retrieved_documents")
-query_search_subgraph.add_conditional_edges("evaluate_retrieved_documents", route_research)
-query_search_subgraph.add_edge("web_research", "summarize_query_research")
-query_search_subgraph.add_conditional_edges("summarize_query_research", route_after_summarization, ["quality_check_summary", END])
-query_search_subgraph.add_conditional_edges("quality_check_summary", route_quality_check, ["improve_summary", END])
-query_search_subgraph.add_edge("improve_summary", "quality_check_summary")
-
-# Define a collector function to explicitly collect and merge search summaries from the subgraph
-def collect_search_summaries(state: ResearcherState):
-    print("--- Collecting search summaries ---")
-    # Get the current search summaries (if any)
-    current_summaries = state.get("search_summaries", [])
-    print(f"  [DEBUG] Current number of collected summaries: {len(current_summaries)}")
-    
-    # If there are no summaries, create a placeholder
-    if not current_summaries:
-        print("  [WARNING] No search summaries found, creating placeholder")
-        user_instructions = state["user_instructions"]
-        placeholder = f"No relevant information was found for the query: {user_instructions}"
-        # Initialize all summary states with the placeholder to maintain information flow
-        return {
-            "search_summaries": [placeholder],
-            "improved_summaries": [placeholder],  # Initialize improved_summaries
-            "filtered_summaries": [placeholder],  # Initialize filtered_summaries
-            "ranked_summaries": [placeholder]     # Initialize ranked_summaries
-        }
-    
-    # Print a sample of the summaries for debugging
-    for i, summary in enumerate(current_summaries):
-        if summary:
-            print(f"  [DEBUG] Summary {i+1} first 100 chars: {summary[:100]}...")
-        else:
-            print(f"  [DEBUG] Summary {i+1} is empty or None")
-    
-    # Create a dictionary with properly formatted keys for the UI
-    # The UI looks for keys that start with 'search_and_summarize_query'
-    result = {}
-    for i, summary in enumerate(current_summaries):
-        if summary:
-            # Format the key to match what the UI expects
-            key = f"search_and_summarize_query_{i+1}"
-            result[key] = summary
-    
-    # Set all summary states to maintain information flow
-    # This ensures that search_summaries is available for the next steps
-    result["search_summaries"] = current_summaries
-    
-    # Initialize improved_summaries with search_summaries to ensure data flow
-    # This will be overwritten by improve_summary if that node runs
-    result["improved_summaries"] = current_summaries.copy()
-    
-    return result
-
-# Create main research agent graph
-researcher_graph = StateGraph(ResearcherState, input=ResearcherStateInput, output=ResearcherStateOutput, config_schema=Configuration)
 
 # Define main researcher nodes
 researcher_graph.add_node(display_embedding_model_info)
 researcher_graph.add_node(detect_language)
 researcher_graph.add_node(generate_research_queries)
-researcher_graph.add_node(search_queries)
-researcher_graph.add_node("search_and_summarize_query", query_search_subgraph.compile())
-researcher_graph.add_node(collect_search_summaries)  # Add the collector node
-researcher_graph.add_node(filter_search_summaries)
-researcher_graph.add_node(rank_search_summaries)
+researcher_graph.add_node(retrieve_rag_documents)
+researcher_graph.add_node(summarize_query_research)
 researcher_graph.add_node(generate_final_answer)
 
 # Define transitions for the main graph
 researcher_graph.add_edge(START, "display_embedding_model_info")
 researcher_graph.add_edge("display_embedding_model_info", "detect_language")
 researcher_graph.add_edge("detect_language", "generate_research_queries")
-researcher_graph.add_edge("generate_research_queries", "search_queries")
-researcher_graph.add_conditional_edges("search_queries", initiate_query_research, ["search_and_summarize_query"])
-researcher_graph.add_conditional_edges("search_and_summarize_query", check_more_queries, ["search_queries", "collect_search_summaries"])  # Route to collector node
-researcher_graph.add_edge("collect_search_summaries", "filter_search_summaries")  # Then to filter
-researcher_graph.add_edge("filter_search_summaries", "rank_search_summaries")
-researcher_graph.add_edge("rank_search_summaries", "generate_final_answer")
+researcher_graph.add_edge("generate_research_queries", "retrieve_rag_documents")
+researcher_graph.add_edge("retrieve_rag_documents", "summarize_query_research")
+researcher_graph.add_edge("summarize_query_research", "generate_final_answer")
 researcher_graph.add_edge("generate_final_answer", END)
 
 # Compile the researcher graph
