@@ -16,16 +16,19 @@ from src.assistant.prompts import (
     # Report writing prompts
     REPORT_WRITER_SYSTEM_PROMPT, REPORT_WRITER_HUMAN_PROMPT,
 )
-from src.assistant.utils import format_documents_with_metadata, invoke_ollama, parse_output, tavily_search, DetectedLanguage
+from src.assistant.utils import format_documents_with_metadata, invoke_ollama, parse_output, tavily_search, DetectedLanguage, Queries
 from src.assistant.rag_helpers import source_summarizer_ollama
 import re
 import time
 
 
+# Initialize the researcher graph
+researcher_graph = StateGraph(ResearcherState)
+
 # Detect language of user query
 def detect_language(state: ResearcherState, config: RunnableConfig):
     print("--- Detecting language of user query ---")
-    query = state["query"]
+    query = state["user_instructions"]  # Get the query from user_instructions
     llm_model = config["configurable"].get("llm_model", "deepseek-r1:latest")
     
     # First check if a language is already set in the config (from GUI)
@@ -43,7 +46,7 @@ def detect_language(state: ResearcherState, config: RunnableConfig):
     
     # Format the human prompt
     human_prompt = LANGUAGE_DETECTOR_HUMAN_PROMPT.format(
-        query=user_instructions
+        query=query
     )
     
     # Using local model with Ollama
@@ -70,7 +73,7 @@ def display_embedding_model_info(state: ResearcherState):
 
 def generate_research_queries(state: ResearcherState, config: RunnableConfig):
     print("--- Generating research queries ---")
-    query = state["query"]
+    query = state["user_instructions"]  # Get the query from user_instructions
     detected_language = state["detected_language"]
     max_queries = config["configurable"].get("max_search_queries", 3)
     llm_model = config["configurable"].get("summarization_llm", "deepseek-r1:latest")
@@ -109,7 +112,10 @@ def generate_research_queries(state: ResearcherState, config: RunnableConfig):
 def retrieve_rag_documents(state: ResearcherState, config: RunnableConfig):
     """Retrieve documents from the RAG database."""
     print("--- Retrieving documents ---")
-    query = state["query"]
+    # Print current state keys for debugging
+    print(f"  [DEBUG] Current state keys: {list(state.keys())}")
+    
+    query = state["user_instructions"]  # Get the query from user_instructions
     detected_language = state.get("detected_language", "English")
     
     # Get the number of results to retrieve from config
@@ -137,41 +143,98 @@ def retrieve_rag_documents(state: ResearcherState, config: RunnableConfig):
     # Use the new search_documents function from vector_db.py with user-specified k and language
     documents = search_documents(query, k=k_results, language=detected_language)
     
-    return {"retrieved_documents": documents}
+    # Add detailed debugging
+    print(f"  [DEBUG] Retrieved {len(documents)} documents")
+    if documents and len(documents) > 0:
+        print(f"  [DEBUG] First document type: {type(documents[0])}")
+        if hasattr(documents[0], "page_content"):
+            print(f"  [DEBUG] First doc content (sample): {documents[0].page_content[:100]}...")
+        if hasattr(documents[0], "metadata"):
+            print(f"  [DEBUG] First doc metadata: {documents[0].metadata}")
+    else:
+        print("  [WARNING] No documents were retrieved. Check vector database.")
+    
+    # Make sure documents is at least an empty list if None
+    if documents is None:
+        documents = []
+    
+    # Return documents directly in state dictionary
+    return {
+        "retrieved_documents": documents
+    }
 
 
-def summarize_query_research(state: QuerySearchState, config: RunnableConfig):
+def summarize_query_research(state: ResearcherState, config: RunnableConfig):
     print("--- Summarizing query research ---")
-    query = state["query"]
+    # Print current state keys for debugging
+    print(f"  [DEBUG] Current state keys: {list(state.keys())}")
+    
+    query = state["user_instructions"]  # Get the query from user_instructions
     # Use the summarization LLM model instead of the general purpose LLM model
     summarization_llm = config["configurable"].get("summarization_llm", "llama3.2")
     detected_language = state.get("detected_language", config["configurable"].get("detected_language", "English"))
     print(f"  [Using language: {detected_language}]")
     print(f"  [Using summarization LLM: {summarization_llm}]")
-
-    information = state["retrieved_documents"]
-
-    # Format documents with metadata but simplified without emphasis on citations
-    # Preserve original content as much as possible
-    context_documents = format_documents_with_metadata(information, preserve_original=True)
     
-    # Format the system prompt for source_summarizer_ollama
-    system_prompt = SUMMARIZER_SYSTEM_PROMPT.format(
-        language=detected_language
-    )
+    # Properly retrieve documents from state with appropriate fallbacks
+    # First try direct access from state
+    information = state.get("retrieved_documents", None)
     
-    # Use source_summarizer_ollama from rag_helpers.py
-    summary_result = source_summarizer_ollama(
-        query=query,
-        context_documents=context_documents,
-        language=detected_language,
-        system_message=system_prompt,
-        llm_model=summarization_llm
-    )
+    # If not found, try to get from the retrieve_rag_documents node output
+    if information is None:
+        # Get from node output if it exists
+        retrieve_output = state.get("retrieve_rag_documents", {})
+        if isinstance(retrieve_output, dict):
+            information = retrieve_output.get("retrieved_documents", [])
     
-    # Extract the content from the result
-    summary = summary_result["content"]
+    # Ensure information is always a list
+    if information is None:
+        information = []
+        
+    print(f"  [DEBUG] Retrieved documents found: {len(information) > 0}")
+    print(f"  [DEBUG] Number of documents: {len(information)}")
+    print(f"  [DEBUG] Full state keys: {list(state.keys())}")
+    
+    # Dump first document for debugging if available
+    if information and len(information) > 0:
+        print("  [DEBUG] First document available:" )
+        doc = information[0]
+        print(f"  Type: {type(doc)}")
+        if hasattr(doc, "page_content"):
+            print(f"  Snippet: {doc.page_content[:100]}...")
+    
+    # Initialize a default summary in case no documents are found
+    summary = ""
+    
+    if not information:
+        print("  [WARNING] No documents were retrieved from the previous step!")
+        # Create a fallback summary when no documents are found
+        summary = f"Keine relevanten Dokumente wurden in der Datenbank gefunden für die Anfrage: '{query}'. " 
+        if detected_language.lower() != 'german':
+            summary = f"No relevant documents were found in the database for the query: '{query}'. "
+    else:
+        # Format documents with metadata but simplified without emphasis on citations
+        # Preserve original content as much as possible
+        context_documents = format_documents_with_metadata(information, preserve_original=True)
+        
+        # Format the system prompt for source_summarizer_ollama
+        system_prompt = SUMMARIZER_SYSTEM_PROMPT.format(
+            language=detected_language
+        )
+        
+        # Use source_summarizer_ollama from rag_helpers.py
+        summary_result = source_summarizer_ollama(
+            query=query,
+            context_documents=context_documents,
+            language=detected_language,
+            system_message=system_prompt,
+            llm_model=summarization_llm
+        )
+        
+        # Extract the content from the result
+        summary = summary_result["content"]
 
+    # Always return a list with at least one summary to maintain workflow consistency
     return {
         "search_summaries": [summary],
     }
@@ -179,29 +242,19 @@ def summarize_query_research(state: QuerySearchState, config: RunnableConfig):
 
 def generate_final_answer(state: ResearcherState, config: RunnableConfig):
     print("--- Generating final answer ---")
-    user_instructions = state["user_instructions"]
-    
-    # Get all types of summaries from state for debugging
-    search_summaries = state.get("search_summaries", [])
-    improved_summaries = state.get("improved_summaries", [])
-    filtered_summaries = state.get("filtered_summaries", [])
-    ranked_summaries = state.get("ranked_summaries", [])
-    
-    # Comprehensive debug information to help diagnose issues
-    print(f"  [DEBUG] State of summaries at final answer generation:")
-    print(f"  [DEBUG] - Search summaries: {len(search_summaries)}")
-    print(f"  [DEBUG] - Improved summaries: {len(improved_summaries)}")
-    print(f"  [DEBUG] - Filtered summaries: {len(filtered_summaries)}")
-    print(f"  [DEBUG] - Ranked summaries: {len(ranked_summaries)}")
-    
-    # Original debug info
-    print(f"  [Number of ranked summaries available: {len(ranked_summaries)}]")
-    
+    # Print current state keys for debugging
+    print(f"  [DEBUG] Current state keys: {list(state.keys())}")
     # Use the report writing LLM model instead of the general purpose LLM model
     report_llm = config["configurable"].get("report_llm", "deepseek-r1:latest")
-    detected_language = state.get("detected_language", "en")
-    print(f"  [Using language: {detected_language}]")
-    print(f"  [Using report writing LLM: {report_llm}]")
+    
+    # Get detected language
+    detected_language = state.get("detected_language", "English")
+    
+    # Format the system prompt
+    system_prompt = REPORT_WRITER_SYSTEM_PROMPT.format(
+        language=detected_language,
+        date=datetime.datetime.now().strftime("%Y-%m-%d")
+    )
     
     # Determine report structure based on the query
     report_structure = """
@@ -210,18 +263,35 @@ def generate_final_answer(state: ResearcherState, config: RunnableConfig):
     3. Detailed Analysis
     4. Conclusion
     """
-        
-    # Format the system prompt
-    system_prompt = REPORT_WRITER_SYSTEM_PROMPT.format(
-        language=detected_language
-    )
+    
+    # Get the search summaries from the state
+    search_summaries = state.get("search_summaries", None)
+    print(f"  [DEBUG] Search summaries found: {search_summaries is not None}")
+    
+    # If not found directly, look for it in nested objects
+    if not search_summaries:
+        # Look for search_summaries in the summarize_query_research node output
+        summarize_output = state.get("summarize_query_research", {})
+        if isinstance(summarize_output, dict) and "search_summaries" in summarize_output:
+            search_summaries = summarize_output["search_summaries"]
+            print(f"  [DEBUG] Found search_summaries in summarize_query_research output")
+    
+    # If still not found, use empty string as fallback
+    if not search_summaries:
+        information = ""
+        print("  [WARNING] No search summaries found in state. Using empty information.")
+    else:
+        information = search_summaries[0] if isinstance(search_summaries, list) and len(search_summaries) > 0 else ""
+        print(f"  [DEBUG] Using information from search_summaries (length: {len(information)})")
+        if information:
+            print(f"  [DEBUG] Information preview: {information[:100]}...")
     
     # Format the human prompt
     human_prompt = REPORT_WRITER_HUMAN_PROMPT.format(
-        language=detected_language,
-        instruction=user_instructions,
+        instruction=state["user_instructions"],
         report_structure=report_structure,
-        information=combined_information
+        information=information,
+        language=detected_language
     )
     
     # Call the LLM with the improved prompts

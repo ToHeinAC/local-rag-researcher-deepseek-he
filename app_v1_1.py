@@ -16,9 +16,14 @@ logging.getLogger("streamlit").setLevel(logging.ERROR)
 
 from src.assistant.graph_v1_1 import researcher, researcher_graph
 from src.assistant.utils import get_report_structures, process_uploaded_files, clear_cuda_memory
-from src.assistant.rag_helpers import load_embed, similarity_search_for_tenant, transform_documents, source_summarizer_ollama
+from src.assistant.rag_helpers_v1_1 import similarity_search_for_tenant, transform_documents, source_summarizer_ollama
 from src.assistant.prompts import SUMMARIZER_SYSTEM_PROMPT
-from langchain_community.embeddings import HuggingFaceEmbeddings
+# Use updated import path to avoid deprecation warning
+try:
+    from langchain_huggingface import HuggingFaceEmbeddings
+except ImportError:
+    # Fallback to original import if package is not installed
+    from langchain_community.embeddings import HuggingFaceEmbeddings
 from dotenv import load_dotenv
 
 # Try to import pyperclip, but handle if it's not available
@@ -62,184 +67,28 @@ def get_embedding_model(model_name):
     )
 
 def generate_workflow_visualization():
+    # Create a custom Mermaid diagram for the simplified workflow
+    # The simplified workflow: display_embedding_model_info -> detect_language -> generate_research_queries -> 
+    # retrieve_rag_documents -> summarize_query_research -> generate_final_answer
+    
+    mermaid_representation = """
+    graph TD
+        START([START]) --> display_embedding_model_info["Display Embedding Model Info"]
+        display_embedding_model_info --> detect_language["Detect Language"]
+        detect_language --> generate_research_queries["Generate Research Queries"]
+        generate_research_queries --> retrieve_rag_documents["Retrieve RAG Documents"]
+        retrieve_rag_documents --> summarize_query_research["Summarize Query Research"]
+        summarize_query_research --> generate_final_answer["Generate Final Answer"]
+        generate_final_answer --> END([END])
+        
+        classDef default fill:#f9f9f9,stroke:#333,stroke-width:1px;
+        classDef active fill:#d4f1f9,stroke:#333,stroke-width:1px;
+        classDef terminal fill:#e9e9e9,stroke:#333,stroke-width:1px;
+        class START,END terminal;
     """
-    Generate a visualization of the langgraph workflow using mermaid
-    """
-    # Create a mermaid diagram representation of the graph
-    mermaid_code = "graph TD\n"
     
-    # Add nodes
-    mermaid_code += "  A[Display Embedding Model] --> B[Detect Language]\n"
-    mermaid_code += "  B --> C[Generate Research Queries]\n"
-    mermaid_code += "  C --> D[Search Queries]\n"
-    mermaid_code += "  D --> E[Search & Summarize Query]\n"
-    mermaid_code += "  E -->|More Queries| D\n"
-    mermaid_code += "  E -->|No More Queries| F[Filter Search Summaries]\n"
-    mermaid_code += "  F --> G[Rank Search Summaries]\n"
-    mermaid_code += "  G --> H[Generate Final Answer]\n"
-    
-    # Add subgraph for Search & Summarize Query with clear quality check connection
-    mermaid_code += "  subgraph Search & Summarize Query\n"
-    mermaid_code += "    E1[Retrieve RAG Documents] --> E2[Evaluate Documents]\n"
-    mermaid_code += "    E2 -->|Relevant| E4[Summarize Research]\n"
-    mermaid_code += "    E2 -->|Not Relevant| E3[Web Research]\n"
-    mermaid_code += "    E3 --> E4\n"
-    
-    # Quality check process with loops
-    mermaid_code += "    subgraph Quality Check Process\n"
-    mermaid_code += "      E5{Quality Check Enabled?}\n"
-    mermaid_code += "      E6[Quality Check]\n"
-    mermaid_code += "      E7[Improve Summary]\n"
-    mermaid_code += "      E5 -->|Yes| E6\n"
-    mermaid_code += "      E6 -->|Needs Improvement & Loops Remaining| E7\n"
-    mermaid_code += "      E7 --> E6\n"
-    mermaid_code += "    end\n"
-    
-    mermaid_code += "    E4 --> E5\n"
-    mermaid_code += "    E5 -->|No| E8[Return Summary]\n"
-    mermaid_code += "    E6 -->|Sufficient or No Loops Remaining| E8\n"
-    mermaid_code += "  end\n"
-    
-    return mermaid_code
-
-def generate_langgraph_visualization():
-    """
-    Generate a visualization of the LangGraph workflow using NetworkX
-    """
-    try:
-        import networkx as nx
-        import matplotlib.pyplot as plt
-        from matplotlib.patches import FancyBboxPatch
-        
-        # Create a directed graph
-        G = nx.DiGraph()
-        
-        # Define the main workflow nodes
-        main_nodes = [
-            "START",
-            "display_embedding_model_info",
-            "detect_language",
-            "generate_research_queries",
-            "search_queries",
-            "search_and_summarize_query",
-            "filter_search_summaries",
-            "rank_search_summaries",
-            "generate_final_answer",
-            "END"
-        ]
-        
-        # Add main nodes to the graph
-        for node in main_nodes:
-            G.add_node(node, type="main")
-        
-        # Define the subgraph nodes for query search
-        subgraph_nodes = [
-            "retrieve_rag_documents",
-            "evaluate_retrieved_documents",
-            "web_research",
-            "summarize_query_research",
-            "quality_check_summary",
-            "improve_summary"
-        ]
-        
-        # Add subgraph nodes to the graph
-        for node in subgraph_nodes:
-            G.add_node(node, type="subgraph")
-        
-        # Define main workflow edges
-        main_edges = [
-            ("START", "display_embedding_model_info"),
-            ("display_embedding_model_info", "detect_language"),
-            ("detect_language", "generate_research_queries"),
-            ("generate_research_queries", "search_queries"),
-            ("search_queries", "search_and_summarize_query"),
-            ("search_and_summarize_query", "search_queries"),
-            ("search_and_summarize_query", "filter_search_summaries"),
-            ("filter_search_summaries", "rank_search_summaries"),
-            ("rank_search_summaries", "generate_final_answer"),
-            ("generate_final_answer", "END")
-        ]
-        
-        # Add main edges to the graph
-        G.add_edges_from(main_edges)
-        
-        # Define subgraph edges
-        subgraph_edges = [
-            ("retrieve_rag_documents", "evaluate_retrieved_documents"),
-            ("evaluate_retrieved_documents", "web_research"),
-            ("evaluate_retrieved_documents", "summarize_query_research"),
-            ("web_research", "summarize_query_research"),
-            ("summarize_query_research", "quality_check_summary"),
-            ("quality_check_summary", "improve_summary"),
-            ("improve_summary", "quality_check_summary")
-        ]
-        
-        # Create a figure with two subplots - one for main workflow and one for subgraph
-        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 16), height_ratios=[2, 1])
-        
-        # Create a subgraph for the main workflow
-        main_graph = G.subgraph(main_nodes)
-        
-        # Position nodes for main workflow
-        main_pos = nx.spring_layout(main_graph, seed=42)
-        
-        # Draw main workflow
-        nx.draw_networkx_nodes(main_graph, main_pos, ax=ax1, node_color='lightblue', node_size=2000)
-        nx.draw_networkx_labels(main_graph, main_pos, ax=ax1, font_size=10, font_weight='bold')
-        nx.draw_networkx_edges(main_graph, main_pos, ax=ax1, arrows=True, arrowsize=20, edge_color='gray')
-        
-        # Add edge labels for conditional transitions in main workflow
-        main_edge_labels = {
-            ("search_and_summarize_query", "search_queries"): "More Queries",
-            ("search_and_summarize_query", "filter_search_summaries"): "No More Queries"
-        }
-        nx.draw_networkx_edge_labels(main_graph, main_pos, edge_labels=main_edge_labels, ax=ax1, font_size=8)
-        
-        # Create a subgraph for the query search
-        query_graph = G.subgraph(subgraph_nodes)
-        
-        # Position nodes for query search subgraph
-        query_pos = nx.spring_layout(query_graph, seed=42)
-        
-        # Draw query search subgraph
-        nx.draw_networkx_nodes(query_graph, query_pos, ax=ax2, node_color='lightgreen', node_size=2000)
-        nx.draw_networkx_labels(query_graph, query_pos, ax=ax2, font_size=10, font_weight='bold')
-        nx.draw_networkx_edges(query_graph, query_pos, ax=ax2, arrows=True, arrowsize=20, edge_color='gray')
-        
-        # Add edge labels for conditional transitions in query search subgraph
-        query_edge_labels = {
-            ("evaluate_retrieved_documents", "web_research"): "Not Relevant",
-            ("evaluate_retrieved_documents", "summarize_query_research"): "Relevant",
-            ("quality_check_summary", "improve_summary"): "Needs Improvement"
-        }
-        nx.draw_networkx_edge_labels(query_graph, query_pos, edge_labels=query_edge_labels, ax=ax2, font_size=8)
-        
-        # Set titles for subplots
-        ax1.set_title("Main LangGraph Workflow", fontsize=14, fontweight='bold')
-        ax2.set_title("Query Search Subgraph", fontsize=14, fontweight='bold')
-        
-        # Remove axis
-        ax1.axis('off')
-        ax2.axis('off')
-        
-        # Add embedding model info
-        from src.assistant.configuration import Configuration
-        config = Configuration()
-        embedding_model = config.embedding_model
-        plt.figtext(0.5, 0.98, f"Embedding Model: {embedding_model}", ha="center", fontsize=12, 
-                   bbox={"facecolor":"lightgray", "alpha":0.5, "pad":5})
-        
-        # Save the figure
-        plt.tight_layout()
-        temp_file_path = "langgraph_workflow.png"
-        plt.savefig(temp_file_path, dpi=100, bbox_inches='tight')
-        plt.close()
-        
-        return temp_file_path
-    except Exception as e:
-        # If visualization fails, return the error
-        st.error(f"Error generating visualization: {str(e)}")
-        return None
+    # Return the mermaid representation for streamlit mermaid display
+    return mermaid_representation
 
 def generate_response(user_input, enable_web_search, report_structure, max_search_queries, report_llm, enable_quality_checker, quality_check_loops=1, use_ext_database=False, selected_database=None, k_results=3):
     """

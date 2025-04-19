@@ -241,10 +241,19 @@ def transform_documents(documents):
 
 # Function to summarize sources using Ollama
 def source_summarizer_ollama(query, context_documents, language, system_message, llm_model="deepseek-r1"):
-    formatted_context = "\n".join(
-        f"Content: {doc['content']}\nSource: {doc['metadata']['name']}\nPath: {doc['metadata']['path']}"
-        for doc in context_documents
-    )
+    # Check if context_documents is already a formatted string
+    if isinstance(context_documents, str):
+        formatted_context = context_documents
+    else:
+        # Handle the case where context_documents is a list of dictionary objects
+        try:
+            formatted_context = "\n".join(
+                f"Content: {doc['content']}\nSource: {doc['metadata']['name']}\nPath: {doc['metadata']['path']}"
+                for doc in context_documents
+            )
+        except (TypeError, KeyError):
+            # Fallback: try to use the documents as they are
+            formatted_context = str(context_documents)
     #formatted_context = "\n".join(
     #    f"{str(doc)}"
     #    for doc in context_documents
