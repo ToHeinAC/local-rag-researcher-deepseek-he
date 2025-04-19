@@ -295,9 +295,19 @@ def source_summarizer_ollama(query, context_documents, language, system_message,
     except:
         final_content = response_content.strip()
 
-    # Extract metadata from all documents
-    document_names = [doc['metadata']['name'] for doc in context_documents]
-    document_paths = [doc['metadata']['path'] for doc in context_documents]
+    # Extract metadata from all documents with added checks for structure
+    document_names = []
+    for doc in context_documents:
+        if isinstance(doc, dict) and 'metadata' in doc and isinstance(doc['metadata'], dict) and 'name' in doc['metadata']:
+            document_names.append(doc['metadata']['name'])
+        else:
+            print(f"Warning: Invalid doc format for name extraction: {doc}")
+    document_paths = []
+    for doc in context_documents:
+        if isinstance(doc, dict) and 'metadata' in doc and isinstance(doc['metadata'], dict) and 'path' in doc['metadata']:
+            document_paths.append(doc['metadata']['path'])
+        else:
+            print(f"Warning: Invalid doc format for path extraction: {doc}")
 
     return {
         "content": final_content,

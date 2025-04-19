@@ -304,7 +304,11 @@ def generate_final_answer(state: ResearcherState, config: RunnableConfig):
     # Remove thinking part if present
     final_answer = parse_output(final_answer)["response"]
     
-    return {"final_answer": final_answer}
+    try:
+        final_answer = final_answer['final_answer']
+    except:
+        final_answer = final_answer
+    
 
 
 # Define main researcher nodes
