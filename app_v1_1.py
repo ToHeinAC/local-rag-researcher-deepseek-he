@@ -619,10 +619,15 @@ def main():
                 
                 # Display with markdown for proper formatting
                 try:
-                    st.markdown(final_answer['final_answer'], unsafe_allow_html=False)  # Display final answer
+                    # Check if final_answer is a dictionary with 'final_answer' key
+                    if isinstance(final_answer, dict) and 'final_answer' in final_answer:
+                        st.markdown(final_answer['final_answer'], unsafe_allow_html=False)
+                    else:
+                        # If it's a string or any other format, display directly
+                        st.markdown(final_answer, unsafe_allow_html=False)
                 except Exception as e:
                     st.error(f"Error displaying response: {str(e)}")
-                    st.markdown(final_answer, unsafe_allow_html=False)
+                    st.markdown(str(final_answer), unsafe_allow_html=False)
                 
                 # Add an expander to display the final state
                 with st.expander("🔍 Debug: Final Workflow State", expanded=False):

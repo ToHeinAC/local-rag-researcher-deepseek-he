@@ -110,133 +110,165 @@ def generate_research_queries(state: ResearcherState, config: RunnableConfig):
 
 
 def retrieve_rag_documents(state: ResearcherState, config: RunnableConfig):
-    """Retrieve documents from the RAG database."""
-    print("--- Retrieving documents ---")
+    """Retrieve documents from the RAG database for all research queries."""
+    print("--- Retrieving documents for all research queries ---")
     # Print current state keys for debugging
     print(f"  [DEBUG] Current state keys: {list(state.keys())}")
     
-    query = state["user_instructions"]  # Get the query from user_instructions
+    # Get research queries
+    research_queries = state.get("research_queries", [])
+    
+    if not research_queries:
+        # If no research queries were generated, use the original user query
+        print("  [WARNING] No research queries found, using original user query")
+        research_queries = [state["user_instructions"]]
+    
+    print(f"  [INFO] Processing {len(research_queries)} research queries")
+    
+    # Get detected language
     detected_language = state.get("detected_language", "English")
     
     # Get the number of results to retrieve from config
     k_results = config["configurable"].get("k_results", 3)  # Default to 3 if not specified
     
-    # Display embedding model information for this retrieval operation
-    # Use the global configuration instance instead of creating a new one
+    # Display embedding model information
     from src.assistant.configuration import get_config_instance
     config_obj = get_config_instance()
     embedding_model = config_obj.embedding_model
     
     # Get the detected language from the global configuration if available
-    # This ensures consistency with the language detected in the main workflow
     if hasattr(config_obj, 'detected_language'):
-        # Use the language from global config, which was set in initiate_query_research
         detected_language = config_obj.detected_language
         print(f"  [Using language from global config: {detected_language}]")
     else:
-        # Fallback to the language from state if not in global config
         print(f"  [Using language from state: {detected_language}]")
     
     print(f"  [Using embedding model for retrieval: {embedding_model}]")
     print(f"  [Retrieving {k_results} results per query]")
     
-    # Use the new search_documents function from vector_db.py with user-specified k and language
-    documents = search_documents(query, k=k_results, language=detected_language)
+    # Dictionary to store documents for each query
+    all_query_documents = {}
     
-    # Add detailed debugging
-    print(f"  [DEBUG] Retrieved {len(documents)} documents")
-    if documents and len(documents) > 0:
-        print(f"  [DEBUG] First document type: {type(documents[0])}")
-        if hasattr(documents[0], "page_content"):
-            print(f"  [DEBUG] First doc content (sample): {documents[0].page_content[:100]}...")
-        if hasattr(documents[0], "metadata"):
-            print(f"  [DEBUG] First doc metadata: {documents[0].metadata}")
-    else:
-        print("  [WARNING] No documents were retrieved. Check vector database.")
+    # Process each research query
+    for i, query in enumerate(research_queries):
+        print(f"  [INFO] Processing query {i+1}/{len(research_queries)}: '{query}'")
+        
+        # Use the search_documents function with user-specified k and language
+        documents = search_documents(query, k=k_results, language=detected_language)
+        
+        # Ensure documents is at least an empty list if None
+        if documents is None:
+            documents = []
+            
+        # Add detailed debugging
+        print(f"  [DEBUG] Retrieved {len(documents)} documents for query: '{query}'")
+        if documents and len(documents) > 0:
+            if hasattr(documents[0], "page_content"):
+                print(f"  [DEBUG] First doc content (sample): {documents[0].page_content[:100]}...")
+        else:
+            print(f"  [WARNING] No documents were retrieved for query: '{query}'")
+        
+        # Store documents for this query
+        all_query_documents[query] = documents
     
-    # Make sure documents is at least an empty list if None
-    if documents is None:
-        documents = []
+    print(f"  [INFO] Completed retrieval for all {len(research_queries)} queries")
     
-    # Return documents directly in state dictionary
+    # Return all retrieved documents organized by query
     return {
-        "retrieved_documents": documents
+        "all_query_documents": all_query_documents,
+        "research_queries": research_queries  # Include for reference
     }
 
 
 def summarize_query_research(state: ResearcherState, config: RunnableConfig):
-    print("--- Summarizing query research ---")
+    print("--- Summarizing all query research ---")
     # Print current state keys for debugging
     print(f"  [DEBUG] Current state keys: {list(state.keys())}")
     
-    query = state["user_instructions"]  # Get the query from user_instructions
-    # Use the summarization LLM model instead of the general purpose LLM model
+    # Get all query documents from the previous step
+    all_query_documents = state.get("all_query_documents", {})
+    research_queries = state.get("research_queries", [])
+    
+    if not all_query_documents:
+        print("  [WARNING] No query documents found in state")
+        # If we have research queries but no documents, create empty summaries
+        if research_queries:
+            print(f"  [INFO] Creating empty summaries for {len(research_queries)} queries")
+        else:
+            print("  [WARNING] No research queries found either")
+            research_queries = [state["user_instructions"]]
+            print(f"  [INFO] Using original query: '{research_queries[0]}'")
+    
+    # Get language and LLM model for summarization
     summarization_llm = config["configurable"].get("summarization_llm", "llama3.2")
     detected_language = state.get("detected_language", config["configurable"].get("detected_language", "English"))
     print(f"  [Using language: {detected_language}]")
     print(f"  [Using summarization LLM: {summarization_llm}]")
     
-    # Properly retrieve documents from state with appropriate fallbacks
-    # First try direct access from state
-    information = state.get("retrieved_documents", None)
+    # Initialize list to store all summaries
+    all_summaries = []
     
-    # If not found, try to get from the retrieve_rag_documents node output
-    if information is None:
-        # Get from node output if it exists
-        retrieve_output = state.get("retrieve_rag_documents", {})
-        if isinstance(retrieve_output, dict):
-            information = retrieve_output.get("retrieved_documents", [])
+    # Format the system prompt for summarization
+    system_prompt = SUMMARIZER_SYSTEM_PROMPT.format(
+        language=detected_language
+    )
     
-    # Ensure information is always a list
-    if information is None:
-        information = []
+    # Process each query and its documents
+    for i, query in enumerate(research_queries):
+        print(f"  [INFO] Summarizing query {i+1}/{len(research_queries)}: '{query}'")
         
-    print(f"  [DEBUG] Retrieved documents found: {len(information) > 0}")
-    print(f"  [DEBUG] Number of documents: {len(information)}")
-    print(f"  [DEBUG] Full state keys: {list(state.keys())}")
-    
-    # Dump first document for debugging if available
-    if information and len(information) > 0:
-        print("  [DEBUG] First document available:" )
-        doc = information[0]
-        print(f"  Type: {type(doc)}")
-        if hasattr(doc, "page_content"):
-            print(f"  Snippet: {doc.page_content[:100]}...")
-    
-    # Initialize a default summary in case no documents are found
-    summary = ""
-    
-    if not information:
-        print("  [WARNING] No documents were retrieved from the previous step!")
-        # Create a fallback summary when no documents are found
-        summary = f"Keine relevanten Dokumente wurden in der Datenbank gefunden für die Anfrage: '{query}'. " 
-        if detected_language.lower() != 'german':
-            summary = f"No relevant documents were found in the database for the query: '{query}'. "
-    else:
-        # Format documents with metadata but simplified without emphasis on citations
-        # Preserve original content as much as possible
-        context_documents = format_documents_with_metadata(information, preserve_original=True)
+        # Get documents for this query
+        documents = all_query_documents.get(query, [])
+        print(f"  [DEBUG] Found {len(documents)} documents for this query")
         
-        # Format the system prompt for source_summarizer_ollama
-        system_prompt = SUMMARIZER_SYSTEM_PROMPT.format(
-            language=detected_language
-        )
+        # Generate summary for this query
+        if not documents:
+            # Create a fallback summary for queries with no documents
+            if detected_language.lower() == 'german':
+                summary = f"Keine relevanten Dokumente wurden in der Datenbank gefunden für die Anfrage: '{query}'"
+            else:
+                summary = f"No relevant documents were found in the database for the query: '{query}'"
+            print("  [WARNING] No documents found for this query, using fallback summary")
+        else:
+            # Format documents for summarization
+            context_documents = format_documents_with_metadata(documents, preserve_original=True)
+            
+            # Use source_summarizer_ollama to create a summary
+            try:
+                summary_result = source_summarizer_ollama(
+                    query=query,
+                    context_documents=context_documents,
+                    language=detected_language,
+                    system_message=system_prompt,
+                    llm_model=summarization_llm
+                )
+                
+                # Extract the content from the result
+                summary = summary_result["content"]
+                print(f"  [DEBUG] Summary generated successfully")
+            except Exception as e:
+                print(f"  [ERROR] Failed to generate summary: {str(e)}")
+                if detected_language.lower() == 'german':
+                    summary = f"Fehler bei der Generierung der Zusammenfassung für Anfrage: '{query}'"
+                else:
+                    summary = f"Error generating summary for query: '{query}'"
         
-        # Use source_summarizer_ollama from rag_helpers.py
-        summary_result = source_summarizer_ollama(
-            query=query,
-            context_documents=context_documents,
-            language=detected_language,
-            system_message=system_prompt,
-            llm_model=summarization_llm
-        )
+        # Create a labeled summary object
+        labeled_summary = {
+            "query": query,
+            "content": summary,
+            "position": i
+        }
         
-        # Extract the content from the result
-        summary = summary_result["content"]
-
-    # Always return a list with at least one summary to maintain workflow consistency
+        # Add to our list of summaries
+        all_summaries.append(labeled_summary)
+        print(f"  [INFO] Added summary for query '{query}'")
+    
+    print(f"  [INFO] Generated {len(all_summaries)} summaries for all queries")
+    
+    # Return all summaries
     return {
-        "search_summaries": [summary],
+        "search_summaries": all_summaries,
     }
 
 
@@ -256,56 +288,61 @@ def generate_final_answer(state: ResearcherState, config: RunnableConfig):
         date=datetime.datetime.now().strftime("%Y-%m-%d")
     )
     
-    # Determine report structure based on the query
-    report_structure = """
+    # Get the report structure from config or use default
+    report_structure = config["configurable"].get("report_structure", """
     1. Introduction
     2. Main Findings
     3. Detailed Analysis
     4. Conclusion
-    """
+    """)
     
     # Get the search summaries from the state
-    search_summaries = state.get("search_summaries", None)
-    print(f"  [DEBUG] Search summaries found: {search_summaries is not None}")
+    search_summaries = state.get("search_summaries", [])
+    print(f"  [DEBUG] Search summaries found: {len(search_summaries) if search_summaries else 0}")
     
-    # If not found directly, look for it in nested objects
-    if not search_summaries:
-        # Look for search_summaries in the summarize_query_research node output
-        summarize_output = state.get("summarize_query_research", {})
-        if isinstance(summarize_output, dict) and "search_summaries" in summarize_output:
-            search_summaries = summarize_output["search_summaries"]
-            print(f"  [DEBUG] Found search_summaries in summarize_query_research output")
-    
-    # Get research queries to pair with summaries
+    # Get research queries for reference
     research_queries = state.get("research_queries", [])
     print(f"  [DEBUG] Research queries found: {len(research_queries) if research_queries else 0}")
     
-    # If still not found, use empty string as fallback
+    # Process and format the accumulated summaries
     if not search_summaries:
-        information = ""
+        information = "No search summaries were found. Please try again with a different query."
         print("  [WARNING] No search summaries found in state. Using empty information.")
     else:
-        # Format the information by pairing queries with their summaries
-        if isinstance(search_summaries, list):
-            # Ensure we have both queries and summaries
-            if research_queries and len(research_queries) == len(search_summaries):
-                # Pair each query with its summary
-                formatted_info = []
-                for i, (query, summary) in enumerate(zip(research_queries, search_summaries)):
-                    formatted_info.append(f"Query {i+1}: {query}\nSummary {i+1}: {summary}\n")
-                information = "\n\n".join(formatted_info)
-            else:
-                # If queries don't match summaries, just use the summaries with generic labels
-                formatted_info = []
-                for i, summary in enumerate(search_summaries):
-                    formatted_info.append(f"Research Summary {i+1}: {summary}\n")
-                information = "\n\n".join(formatted_info)
+        # Format the information by organizing all summaries
+        formatted_info = []
+        
+        # Process labeled summaries (new format with query, content, position)
+        if isinstance(search_summaries[0], dict) and "query" in search_summaries[0] and "content" in search_summaries[0]:
+            # Sort summaries by position for consistent ordering
+            sorted_summaries = sorted(search_summaries, key=lambda x: x.get("position", 0))
+            
+            for i, summary_obj in enumerate(sorted_summaries):
+                query = summary_obj.get("query", f"Research Query {i+1}")
+                content = summary_obj.get("content", "")
+                
+                # Add formatted content with query and summary
+                formatted_info.append(f"## Research Query {i+1}: {query}\n\n{content}\n")
+            
+            # Join all formatted summaries
+            information = "\n\n".join(formatted_info)
+        
+        # Fallback for older format summaries (plain strings)
+        elif all(isinstance(s, str) for s in search_summaries):
+            for i, summary in enumerate(search_summaries):
+                # Try to pair with research query if available
+                query = research_queries[i] if i < len(research_queries) else f"Research Query {i+1}"
+                formatted_info.append(f"## Research Query {i+1}: {query}\n\n{summary}\n")
+            
+            information = "\n\n".join(formatted_info)
+        
+        # Handle any other format as stringified content
         else:
             information = str(search_summaries)
         
-        print(f"  [DEBUG] Using information from search_summaries (length: {len(information)})")
+        print(f"  [DEBUG] Using information from {len(search_summaries)} summaries (length: {len(information)})")
         if information:
-            print(f"  [DEBUG] Information preview: {information[:100]}...")
+            print(f"  [DEBUG] Information preview (first 100 chars): {information[:100]}...")
     
     # Format the human prompt
     human_prompt = REPORT_WRITER_HUMAN_PROMPT.format(
@@ -315,7 +352,7 @@ def generate_final_answer(state: ResearcherState, config: RunnableConfig):
         language=detected_language
     )
     
-    # Call the LLM with the improved prompts
+    # Call the LLM with the prompt to generate the final answer
     final_answer = invoke_ollama(
         model=report_llm,
         system_prompt=system_prompt,
@@ -324,75 +361,7 @@ def generate_final_answer(state: ResearcherState, config: RunnableConfig):
     
     # Remove thinking part if present
     parsed_output = parse_output(final_answer)
-    parsed_response = parsed_output.get("response", final_answer)
-    
-    # Initialize variable to hold extracted report content
-    report_content = None
-    
-    try:
-        # First check if the response is a JSON string (LLMs sometimes return JSON as string)
-        if isinstance(parsed_response, str) and (parsed_response.strip().startswith('{') or "```json" in parsed_response):
-            # Try to extract JSON from markdown code block if present
-            if "```json" in parsed_response:
-                json_start = parsed_response.find("```json") + 7
-                json_end = parsed_response.find("```", json_start)
-                if json_end > json_start:
-                    json_str = parsed_response[json_start:json_end].strip()
-                    import json
-                    try:
-                        json_obj = json.loads(json_str)
-                        if isinstance(json_obj, dict) and 'report' in json_obj:
-                            report_content = json_obj['report']
-                            print(f"  [INFO] Successfully extracted report from JSON string")
-                        else:
-                            report_content = str(json_obj)
-                    except json.JSONDecodeError:
-                        print(f"  [WARNING] Failed to parse JSON from code block, using as plain text")
-                        report_content = parsed_response
-            else:
-                # Try to parse as plain JSON
-                import json
-                try:
-                    json_obj = json.loads(parsed_response)
-                    if isinstance(json_obj, dict) and 'report' in json_obj:
-                        report_content = json_obj['report']
-                        print(f"  [INFO] Successfully parsed JSON string")
-                    else:
-                        report_content = str(json_obj)
-                except json.JSONDecodeError:
-                    print(f"  [WARNING] Response looks like JSON but couldn't be parsed, using as plain text")
-                    report_content = parsed_response
-        # Check if it's already a dictionary
-        elif isinstance(parsed_response, dict):
-            if 'report' in parsed_response:
-                report_content = parsed_response['report']
-                print(f"  [INFO] Using 'report' field from dictionary response")
-            else:
-                report_content = str(parsed_response)
-                print(f"  [WARNING] 'report' key not found in response dictionary; using full response instead.")
-        else:
-            # If it's a plain string, use it directly
-            print(f"  [INFO] Response is already a plain string, using as is.")
-            report_content = parsed_response
-    except Exception as e:
-        print(f"  [ERROR] Failed to parse response: {str(e)}. Using raw response.")
-        report_content = str(parsed_response)
-    
-    # Strip any remaining JSON formatting from the string
-    if isinstance(report_content, str):
-        # Sometimes LLMs add 'json' prefix or other formatting - clean it up
-        if report_content.startswith('json\n'):
-            report_content = report_content[5:]  # Remove 'json\n' prefix
-        # Clean up any lingering JSON wrapping
-        if report_content.startswith('{') and report_content.endswith('}'):
-            try:
-                import json
-                json_obj = json.loads(report_content)
-                if isinstance(json_obj, dict) and 'report' in json_obj:
-                    report_content = json_obj['report']
-            except:
-                # If can't parse as JSON, keep as is
-                pass
+    report_content = parsed_output.get("response", final_answer)
     
     # For LangGraph, we need to return an update to state as a dictionary
     # but ensure the content itself is just the report text
@@ -448,7 +417,39 @@ researcher_graph.add_node(retrieve_rag_documents)
 researcher_graph.add_node(summarize_query_research)
 researcher_graph.add_node(generate_final_answer)
 
-# Define transitions for the main graph
+# Add a router function to decide whether to process more queries or go to the final answer
+def query_router(state: ResearcherState):
+    print("--- Routing based on research queries ---")
+    
+    # Get the research queries and current position
+    research_queries = state.get("research_queries", [])
+    current_position = state.get("current_position", 0)
+    
+    print(f"  [DEBUG] Current position: {current_position}, Total queries: {len(research_queries)}")
+    
+    # If we have more queries to process, continue with the next one
+    if current_position < len(research_queries):
+        # We have more queries to process
+        print(f"  [INFO] Processing next query: '{research_queries[current_position]}'")
+    else:
+        # We've processed all queries, move to final answer
+        print("  [INFO] All queries processed, generating final answer")
+    
+    # Return empty dict for state updates, conditional edges will handle the routing
+    return {}
+
+# Set the current position after each query is processed
+def update_position(state: ResearcherState):
+    print("--- Updating position for next query ---")
+    
+    # Get the current position and increment it
+    current_position = state.get("current_position", 0) + 1
+    
+    # Return the updated state with the new position
+    print(f"  [INFO] Updated position to {current_position}")
+    return {"current_position": current_position}
+
+# Define transitions for the simplified graph - linear flow without router
 researcher_graph.add_edge(START, "display_embedding_model_info")
 researcher_graph.add_edge("display_embedding_model_info", "detect_language")
 researcher_graph.add_edge("detect_language", "generate_research_queries")
@@ -456,6 +457,8 @@ researcher_graph.add_edge("generate_research_queries", "retrieve_rag_documents")
 researcher_graph.add_edge("retrieve_rag_documents", "summarize_query_research")
 researcher_graph.add_edge("summarize_query_research", "generate_final_answer")
 researcher_graph.add_edge("generate_final_answer", END)
+
+# No need for routing nodes or conditional edges since each node now processes all queries at once
 
 # Compile the researcher graph
 researcher = researcher_graph.compile()
