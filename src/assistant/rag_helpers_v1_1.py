@@ -171,6 +171,35 @@ def source_summarizer_ollama(query: str, context_documents: List[Dict], language
         source = metadata.get("source", "Unknown Source")
         path = metadata.get("path", "")
         
+        # Handle path validation without character-by-character errors
+        if path:
+            try:
+                # Check if path is a string
+                if not isinstance(path, str):
+                    print(f"  [WARNING] Path is not a string: {type(path)}")
+                    path = ""
+                # Check for special characters or non-printable characters
+                elif any(ord(c) < 32 or ord(c) > 126 for c in path) or '\\x' in repr(path):
+                    print(f"  [WARNING] Path contains special or non-printable characters, sanitizing")
+                    # Sanitize by removing problematic characters
+                    path = re.sub(r'[^\w\-\.\s\/:]+', '', path)
+                # Validate general path format
+                elif not re.match(r'^[\w\-\.\s\/:]+$', path.strip()):
+                    print(f"  [WARNING] Invalid path format, sanitizing: {path[:20]}...")
+                    path = re.sub(r'[^\w\-\.\s\/:]+', '', path)
+                else:
+                    # Valid path
+                    if len(path) > 100:
+                        print(f"  [DEBUG] Valid path extracted (truncated): {path[:50]}...")
+                    else:
+                        print(f"  [DEBUG] Valid path extracted: {path}")
+            except Exception as e:
+                print(f"  [WARNING] Error processing path: {type(e).__name__}")
+                path = ""  # Set to empty to avoid further issues
+        else:
+            # No path in metadata
+            path = ""
+        
         # Format this document with its source
         formatted_docs += f"\n---\nDOCUMENT {i+1}: {source}\n---\n{content}\n\n"
     

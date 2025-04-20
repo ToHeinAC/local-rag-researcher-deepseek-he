@@ -762,8 +762,31 @@ def main():
 
         with st.chat_message("assistant"):
             try:
-                # Display the final answer
-                st.markdown(assistant_response['final_answer'], unsafe_allow_html=False)  # Use markdown for proper rendering
+                # Check if response is JSON string containing a report field
+                if isinstance(assistant_response, dict) and 'final_answer' in assistant_response:
+                    final_answer = assistant_response['final_answer']
+                    
+                    # Try to parse JSON if it's a string
+                    import json
+                    try:
+                        if isinstance(final_answer, str) and final_answer.strip().startswith('{') and 'report' in final_answer:
+                            # Try to extract report from JSON
+                            json_data = json.loads(final_answer)
+                            if 'report' in json_data:
+                                # Display just the report content with markdown formatting
+                                st.markdown(json_data['report'], unsafe_allow_html=False)
+                            else:
+                                # Fallback to displaying the whole final answer
+                                st.markdown(final_answer, unsafe_allow_html=False)
+                        else:
+                            # Not JSON with report, display as is
+                            st.markdown(final_answer, unsafe_allow_html=False)
+                    except json.JSONDecodeError:
+                        # Not valid JSON, display as is
+                        st.markdown(final_answer, unsafe_allow_html=False)
+                else:
+                    # Fallback for non-dict response
+                    st.markdown(assistant_response, unsafe_allow_html=False)
                 
                 # Add an expander to display the final state
                 with st.expander("🔍 Debug: Final Workflow State", expanded=False):

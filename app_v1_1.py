@@ -611,8 +611,18 @@ def main():
 
         with st.chat_message("assistant"):
             try:
-                # Display the final answer
-                st.markdown(assistant_response['final_answer'], unsafe_allow_html=False)  # Use markdown for proper rendering
+                # Get the final answer content - since we're now getting plain markdown text directly
+                if isinstance(assistant_response, dict) and 'final_answer' in assistant_response:
+                    final_answer = assistant_response['final_answer']
+                else:
+                    final_answer = str(assistant_response)
+                
+                # Display with markdown for proper formatting
+                try:
+                    st.markdown(final_answer['final_answer'], unsafe_allow_html=False)  # Display final answer
+                except Exception as e:
+                    st.error(f"Error displaying response: {str(e)}")
+                    st.markdown(final_answer, unsafe_allow_html=False)
                 
                 # Add an expander to display the final state
                 with st.expander("🔍 Debug: Final Workflow State", expanded=False):
@@ -622,8 +632,9 @@ def main():
                     else:
                         # Otherwise display the entire response
                         st.json(assistant_response)
-            except:
-                st.markdown(assistant_response, unsafe_allow_html=False)
+            except Exception as e:
+                st.error(f"Error displaying response: {str(e)}")
+                st.markdown(str(assistant_response), unsafe_allow_html=False)
 
             # Copy button below the AI message
             if PYPERCLIP_AVAILABLE:

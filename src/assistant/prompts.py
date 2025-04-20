@@ -172,7 +172,7 @@ User instruction: {instruction}
 Report structure to follow:
 {report_structure}
 
-Information from research (use ONLY this information, do not add any external knowledge):
+Information from research (use ONLY this information, do not add any external knowledge, no prefix or suffix, just plain markdown text):
 {information}
 """
 

@@ -276,12 +276,33 @@ def generate_final_answer(state: ResearcherState, config: RunnableConfig):
             search_summaries = summarize_output["search_summaries"]
             print(f"  [DEBUG] Found search_summaries in summarize_query_research output")
     
+    # Get research queries to pair with summaries
+    research_queries = state.get("research_queries", [])
+    print(f"  [DEBUG] Research queries found: {len(research_queries) if research_queries else 0}")
+    
     # If still not found, use empty string as fallback
     if not search_summaries:
         information = ""
         print("  [WARNING] No search summaries found in state. Using empty information.")
     else:
-        information = search_summaries[0] if isinstance(search_summaries, list) and len(search_summaries) > 0 else ""
+        # Format the information by pairing queries with their summaries
+        if isinstance(search_summaries, list):
+            # Ensure we have both queries and summaries
+            if research_queries and len(research_queries) == len(search_summaries):
+                # Pair each query with its summary
+                formatted_info = []
+                for i, (query, summary) in enumerate(zip(research_queries, search_summaries)):
+                    formatted_info.append(f"Query {i+1}: {query}\nSummary {i+1}: {summary}\n")
+                information = "\n\n".join(formatted_info)
+            else:
+                # If queries don't match summaries, just use the summaries with generic labels
+                formatted_info = []
+                for i, summary in enumerate(search_summaries):
+                    formatted_info.append(f"Research Summary {i+1}: {summary}\n")
+                information = "\n\n".join(formatted_info)
+        else:
+            information = str(search_summaries)
+        
         print(f"  [DEBUG] Using information from search_summaries (length: {len(information)})")
         if information:
             print(f"  [DEBUG] Information preview: {information[:100]}...")
@@ -302,13 +323,121 @@ def generate_final_answer(state: ResearcherState, config: RunnableConfig):
     )
     
     # Remove thinking part if present
-    final_answer = parse_output(final_answer)["response"]
+    parsed_output = parse_output(final_answer)
+    parsed_response = parsed_output.get("response", final_answer)
+    
+    # Initialize variable to hold extracted report content
+    report_content = None
     
     try:
-        final_answer = final_answer['final_answer']
-    except:
-        final_answer = final_answer
+        # First check if the response is a JSON string (LLMs sometimes return JSON as string)
+        if isinstance(parsed_response, str) and (parsed_response.strip().startswith('{') or "```json" in parsed_response):
+            # Try to extract JSON from markdown code block if present
+            if "```json" in parsed_response:
+                json_start = parsed_response.find("```json") + 7
+                json_end = parsed_response.find("```", json_start)
+                if json_end > json_start:
+                    json_str = parsed_response[json_start:json_end].strip()
+                    import json
+                    try:
+                        json_obj = json.loads(json_str)
+                        if isinstance(json_obj, dict) and 'report' in json_obj:
+                            report_content = json_obj['report']
+                            print(f"  [INFO] Successfully extracted report from JSON string")
+                        else:
+                            report_content = str(json_obj)
+                    except json.JSONDecodeError:
+                        print(f"  [WARNING] Failed to parse JSON from code block, using as plain text")
+                        report_content = parsed_response
+            else:
+                # Try to parse as plain JSON
+                import json
+                try:
+                    json_obj = json.loads(parsed_response)
+                    if isinstance(json_obj, dict) and 'report' in json_obj:
+                        report_content = json_obj['report']
+                        print(f"  [INFO] Successfully parsed JSON string")
+                    else:
+                        report_content = str(json_obj)
+                except json.JSONDecodeError:
+                    print(f"  [WARNING] Response looks like JSON but couldn't be parsed, using as plain text")
+                    report_content = parsed_response
+        # Check if it's already a dictionary
+        elif isinstance(parsed_response, dict):
+            if 'report' in parsed_response:
+                report_content = parsed_response['report']
+                print(f"  [INFO] Using 'report' field from dictionary response")
+            else:
+                report_content = str(parsed_response)
+                print(f"  [WARNING] 'report' key not found in response dictionary; using full response instead.")
+        else:
+            # If it's a plain string, use it directly
+            print(f"  [INFO] Response is already a plain string, using as is.")
+            report_content = parsed_response
+    except Exception as e:
+        print(f"  [ERROR] Failed to parse response: {str(e)}. Using raw response.")
+        report_content = str(parsed_response)
     
+    # Strip any remaining JSON formatting from the string
+    if isinstance(report_content, str):
+        # Sometimes LLMs add 'json' prefix or other formatting - clean it up
+        if report_content.startswith('json\n'):
+            report_content = report_content[5:]  # Remove 'json\n' prefix
+        # Clean up any lingering JSON wrapping
+        if report_content.startswith('{') and report_content.endswith('}'):
+            try:
+                import json
+                json_obj = json.loads(report_content)
+                if isinstance(json_obj, dict) and 'report' in json_obj:
+                    report_content = json_obj['report']
+            except:
+                # If can't parse as JSON, keep as is
+                pass
+    
+    # For LangGraph, we need to return an update to state as a dictionary
+    # but ensure the content itself is just the report text
+    print(f"  [INFO] Returning final answer (length: {len(report_content) if isinstance(report_content, str) else 'unknown'})")
+    
+    # Make sure the report content is not None
+    if report_content is None:
+        # Fallback to using search summaries if available
+        if search_summaries:
+            report_content = "# Research Report\n\n"
+            if isinstance(search_summaries, list):
+                for i, summary in enumerate(search_summaries):
+                    report_content += f"## Research Finding {i+1}\n\n{summary}\n\n"
+            else:
+                report_content += f"## Research Findings\n\n{search_summaries}\n\n"
+            report_content += "\n## Conclusion\n\nThe above findings represent the key information found during research."
+        else:
+            report_content = "No research findings could be generated. Please try again with a different query."
+    
+    # Since we're now getting plain markdown text directly from the LLM (based on updated prompt),
+    # we just need basic cleanup of markdown code blocks if present
+    if isinstance(report_content, str):
+        # Clean up common prefixes that might still appear
+        prefixes_to_remove = ["```markdown\n", "```md\n", "```\n"]
+        for prefix in prefixes_to_remove:
+            if report_content.startswith(prefix):
+                report_content = report_content[len(prefix):]
+        
+        # Clean up common suffixes
+        suffixes_to_remove = ["\n```"]
+        for suffix in suffixes_to_remove:
+            if report_content.endswith(suffix):
+                report_content = report_content[:-len(suffix)]
+        
+        # Ensure text is properly stripped of whitespace
+        report_content = report_content.strip()
+        
+        print(f"  [INFO] Ensured report content is clean markdown for display")
+    
+    # Set the final_answer in the state and return it with the node name
+    # This ensures both the state is updated and the UI can access it
+    return {
+        "final_answer": report_content,  # Update the state's final_answer field
+        "generate_final_answer": report_content  # Return for the UI display
+    }
 
 
 # Define main researcher nodes
