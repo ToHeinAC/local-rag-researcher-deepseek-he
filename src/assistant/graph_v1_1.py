@@ -4,7 +4,7 @@ from langgraph.constants import Send
 from langgraph.graph import START, END, StateGraph
 from langchain_core.runnables.config import RunnableConfig
 from src.assistant.configuration import Configuration
-from src.assistant.vector_db import get_or_create_vector_db, search_documents, get_embedding_model_path
+from src.assistant.vector_db_v1_1 import get_or_create_vector_db, search_documents, get_embedding_model_path
 from src.assistant.state_v1_1 import ResearcherState
 from src.assistant.prompts import (
     # Language detection prompts
@@ -17,7 +17,7 @@ from src.assistant.prompts import (
     REPORT_WRITER_SYSTEM_PROMPT, REPORT_WRITER_HUMAN_PROMPT,
 )
 from src.assistant.utils import format_documents_with_metadata, invoke_ollama, parse_output, tavily_search, DetectedLanguage, Queries
-from src.assistant.rag_helpers import source_summarizer_ollama
+from src.assistant.rag_helpers_v1_1 import source_summarizer_ollama
 import re
 import time
 
@@ -174,6 +174,13 @@ def retrieve_rag_documents(state: ResearcherState, config: RunnableConfig):
     print(f"  [INFO] Completed retrieval for all {len(research_queries)} queries")
     
     # Return all retrieved documents organized by query
+    # Make sure to keep a full trace of all retrieved documents for debugging
+    print(f"  [DEBUG] Returning all_query_documents with {len(all_query_documents)} queries")
+    for query, docs in all_query_documents.items():
+        print(f"  [DEBUG] Query '{query[:50]}...' has {len(docs)} documents")
+    
+    # In LangGraph, the returned dictionary represents the specific state updates
+    # We need to make sure this is properly merged with the existing state
     return {
         "all_query_documents": all_query_documents,
         "research_queries": research_queries  # Include for reference
@@ -188,6 +195,14 @@ def summarize_query_research(state: ResearcherState, config: RunnableConfig):
     # Get all query documents from the previous step
     all_query_documents = state.get("all_query_documents", {})
     research_queries = state.get("research_queries", [])
+    
+    # Debug the all_query_documents structure if it exists
+    if "all_query_documents" in state:
+        print(f"  [DEBUG] Found all_query_documents in state with {len(state['all_query_documents'])} queries")
+        for query, docs in state['all_query_documents'].items():
+            print(f"  [DEBUG] Query '{query[:50]}...' has {len(docs)} documents")
+    else:
+        print("  [DEBUG] all_query_documents not found in state!")
     
     if not all_query_documents:
         print("  [WARNING] No query documents found in state")
@@ -266,10 +281,19 @@ def summarize_query_research(state: ResearcherState, config: RunnableConfig):
     
     print(f"  [INFO] Generated {len(all_summaries)} summaries for all queries")
     
-    # Return all summaries
-    return {
+    # Return all summaries, but also preserve the all_query_documents in the state
+    # In LangGraph, we need to explicitly return all state keys we want to preserve
+    result = {
         "search_summaries": all_summaries,
+        "all_query_documents": all_query_documents,  # Always return this regardless of source
+        "research_queries": research_queries  # Ensure research_queries is preserved
     }
+    
+    # Include additional context if it exists
+    if "additional_context" in state:
+        result["additional_context"] = state["additional_context"]
+    
+    return result
 
 
 def generate_final_answer(state: ResearcherState, config: RunnableConfig):
@@ -457,6 +481,9 @@ researcher_graph.add_edge("generate_research_queries", "retrieve_rag_documents")
 researcher_graph.add_edge("retrieve_rag_documents", "summarize_query_research")
 researcher_graph.add_edge("summarize_query_research", "generate_final_answer")
 researcher_graph.add_edge("generate_final_answer", END)
+
+# Since we're using the StateGraph with ResearcherState, state is preserved by default
+# But we'll explicitly ensure the required keys are preserved in the researcher state class
 
 # No need for routing nodes or conditional edges since each node now processes all queries at once
 

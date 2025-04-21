@@ -129,6 +129,78 @@ def generate_response(user_input, enable_web_search, report_structure, max_searc
     # Create a placeholder for the elapsed time
     elapsed_time_placeholder = st.empty()
     
+    # Define callback function to process and display the state during execution
+    def update_callback(state):
+        # Get the elapsed time since the start of the workflow
+        elapsed_time = time.time() - start_time
+        elapsed_time_placeholder.write(f"⏱️ Elapsed time: {elapsed_time:.1f} seconds")
+        
+        # Get the current step
+        step = state.get('current_step', '💤 Idle')
+        
+        # Update the langgraph status
+        langgraph_status.update(label=f"**Researcher Step: {step}**")
+        
+        # If there's a final_answer, update the status to complete
+        if 'final_answer' in state:
+            langgraph_status.update(state="complete", label="**Research Complete ✅**")
+            
+            # Display language detection result
+            if 'detected_language' in state:
+                st.success(f"🌐 Detected language: **{state['detected_language']}**")
+            
+            # Display the LangGraph workflow visualization
+            st.subheader("LangGraph Workflow Visualization")
+            try:
+                st.markdown(generate_workflow_visualization())
+            except Exception as e:
+                st.error(f"Error generating workflow visualization: {str(e)}")
+            
+            # Display important research steps results using expanders
+            if 'research_queries' in state and 'all_query_documents' in state and 'search_summaries' in state:
+                st.subheader("Research Steps Results")
+                
+                research_queries = state['research_queries']
+                all_query_documents = state['all_query_documents']
+                search_summaries = state['search_summaries']
+                
+                # Create a mapping from query to summary for easier lookup
+                summary_map = {summary['query']: summary['content'] for summary in search_summaries}
+                
+                # Display each query with its retrieved documents and summary
+                for i, query in enumerate(research_queries):
+                    with st.expander(f"Research Query {i+1}: {query}"):
+                        st.markdown(f"**Query:** {query}")
+                        
+                        # Display retrieved documents
+                        documents = all_query_documents.get(query, [])
+                        st.markdown(f"### Retrieved Documents ({len(documents)})")
+                        
+                        if documents:
+                            for j, doc in enumerate(documents):
+                                with st.expander(f"Document {j+1}: {doc.metadata.get('source', 'Unknown')}"):
+                                    st.write(f"**Source:** {doc.metadata.get('source', 'Unknown')}")
+                                    st.write(f"**Path:** {doc.metadata.get('path', 'Unknown')}")
+                                    st.write(f"**Content:**\n{doc.page_content}")
+                        else:
+                            st.warning("No documents retrieved for this query.")
+                        
+                        # Display summary
+                        st.markdown("### Summary of Retrieved Documents")
+                        if query in summary_map:
+                            st.markdown(summary_map[query])
+                        else:
+                            st.warning("No summary available for this query.")
+            
+            # Return the final state for further processing or display
+            return {
+                "steps": state,
+                "final_answer": state["final_answer"]
+            }
+            
+        # Return None to continue processing
+        return None
+    
     # If using external database, perform retrieval and summarization first
     if use_ext_database and selected_database:
         # Create the status for the retrieval process
@@ -272,88 +344,160 @@ def generate_response(user_input, enable_web_search, report_structure, max_searc
             filter_summaries_expander = st.expander("Filter Summaries", expanded=False)
             rank_summaries_expander = st.expander("Rank Summaries", expanded=False)
             final_answer_expander = st.expander("Generate Final Answer", expanded=False)
-
-            steps = []
-
-            # Run the researcher graph and stream outputs
-            for output in researcher.stream(initial_state, config=config):
-                # Update elapsed time display directly in the main thread
-                current_time = time.time()
-                elapsed_seconds = current_time - start_time
-                elapsed_time = str(timedelta(seconds=int(elapsed_seconds)))
-                elapsed_time_placeholder.info(f"⏱️ Elapsed time: {elapsed_time}")
+            # Run the researcher graph and stream outputs 
+            try:
+                # Record the start time of the workflow
+                st.session_state.workflow_start_time = time.time()
                 
-                for key, value in output.items():
-                    expander_label = key.replace("_", " ").title()
-
-                    if key == "generate_research_queries":
-                        with generate_queries_expander:
-                            st.write(value)
-
-                    elif key.startswith("search_and_summarize_query"):
-                        with search_queries_expander:
-                            with st.expander(expander_label, expanded=False):
-                                st.write(value)
-                                
-                    elif key == "filter_search_summaries":
-                        with filter_summaries_expander:
-                            # Display basic filtering information
-                            filtered_count = len(value.get('filtered_summaries', []))
-                            total_count = len(value.get('filtering_details', []))
-                            st.write(f"Filtered {total_count} summaries down to {filtered_count} based on relevance to the original query")
+                # Create containers for displaying results as they come in
+                results_container = st.container()
+                
+                # Initialize state tracking
+                current_state = {}
+                research_queries_displayed = False
+                documents_displayed = {}  # Track which queries have had documents displayed
+                summaries_displayed = {}  # Track which queries have had summaries displayed
+                
+                # Initialize and run the graph with streaming
+                researcher_instance = researcher_graph.compile()
+                
+                with results_container:
+                    st.subheader("Research Steps Results")
+                
+                for output in researcher_instance.stream(
+                    initial_state,
+                    config=config
+                ):
+                    # Update elapsed time display
+                    current_time = time.time()
+                    elapsed_seconds = current_time - start_time
+                    elapsed_time = str(timedelta(seconds=int(elapsed_seconds)))
+                    elapsed_time_placeholder.info(f"⏱️ Elapsed time: {elapsed_time}")
+                    
+                    # Update current step in the status widget
+                    if 'current_step' in output:
+                        step = output['current_step']
+                        langgraph_status.update(label=f"**Researcher Step: {step}**")
+                    
+                    # Merge the new output into the current state
+                    current_state.update(output)
+                    
+                    # Display language detection result
+                    if 'detected_language' in output:
+                        with results_container:
+                            st.success(f"🌐 Detected language: **{output['detected_language']}**")
                             
-                            # Display detailed filtering information
-                            if 'filtering_details' in value and value['filtering_details']:
-                                st.write("### Filtering Details")
-                                for detail in value['filtering_details']:
-                                    # Create an icon based on relevance
-                                    icon = "✔️" if detail['is_relevant'] else "❌"
-                                    # Add a special icon if it was included anyway
-                                    if not detail['is_relevant'] and detail.get('included_anyway', False):
-                                        icon = "⚠️"
-                                    
-                                    # Create an expander for each summary's evaluation
-                                    with st.expander(f"{icon} Summary {detail['summary_index']} (Confidence: {detail['confidence']:.2f})", expanded=False):
-                                        st.write(f"**Preview:** {detail['summary_preview']}")
-                                        st.write(f"**Justification:** {detail['justification']}")
+                    # Display research queries as they become available
+                    if 'research_queries' in output and not research_queries_displayed:
+                        research_queries = output['research_queries']
+                        with results_container:
+                            for i, query in enumerate(research_queries):
+                                with st.expander(f"Research Query {i+1}: {query}"):
+                                    st.markdown(f"**Query:** {query}")
+                                    st.info("Retrieving documents...")
+                        research_queries_displayed = True
+                    
+                    # Display documents as they become available for each query
+                    if 'all_query_documents' in output and 'research_queries' in current_state:
+                        all_query_documents = output['all_query_documents']
+                        research_queries = current_state['research_queries']
+                        
+                        # Display documents for each query that hasn't been displayed yet
+                        for query in research_queries:
+                            if query in all_query_documents and query not in documents_displayed:
+                                documents = all_query_documents[query]
+                                
+                                # Find the expander for this query and update it
+                                with results_container:
+                                    for i, q in enumerate(research_queries):
+                                        if q == query:
+                                            with st.expander(f"Research Query {i+1}: {query}", expanded=True):
+                                                st.markdown(f"**Query:** {query}")
+                                                
+                                                # Display retrieved documents
+                                                st.markdown(f"### Retrieved Documents ({len(documents)})")
+                                                
+                                                if documents:
+                                                    for j, doc in enumerate(documents):
+                                                        with st.expander(f"Document {j+1}: {doc.metadata.get('source', 'Unknown')}"):
+                                                            st.write(f"**Source:** {doc.metadata.get('source', 'Unknown')}")
+                                                            st.write(f"**Path:** {doc.metadata.get('path', 'Unknown')}")
+                                                            st.write(f"**Content:**\n{doc.page_content}")
+                                                else:
+                                                    st.warning("No documents retrieved for this query.")
+                                                    
+                                                st.info("Generating summary...")
+                                
+                                # Mark this query's documents as displayed
+                                documents_displayed[query] = True
+                    
+                    # Display summaries as they become available
+                    if 'search_summaries' in output:
+                        search_summaries = output['search_summaries']
+                        research_queries = current_state.get('research_queries', [])
+                        
+                        # Create a mapping from query to summary for easier lookup
+                        summary_map = {summary['query']: summary['content'] for summary in search_summaries}
+                        
+                        # Update expanders with summaries
+                        with results_container:
+                            for i, query in enumerate(research_queries):
+                                if query in summary_map and query not in summaries_displayed:
+                                    with st.expander(f"Research Query {i+1}: {query}", expanded=True):
+                                        st.markdown(f"**Query:** {query}")
                                         
-                                        # If it was included despite being irrelevant, explain why
-                                        if not detail['is_relevant'] and detail.get('included_anyway', False):
-                                            st.write("**Note:** This summary was included despite being marked as irrelevant because all summaries were filtered out and this one had the highest confidence score.")
-
-                    elif key == "rank_search_summaries":
-                        with rank_summaries_expander:
-                            # Display ranking information
-                            if 'relevance_scores' in value and 'ranked_summaries' in value:
-                                scores = value['relevance_scores']
-                                summaries = value['ranked_summaries']
-                                if scores and summaries:
-                                    st.write("Summaries ranked by relevance:")
-                                    for i, (score, summary) in enumerate(zip(scores, summaries)):
-                                        with st.expander(f"Summary {i+1} (Relevance: {score}/10)", expanded=i==0):
-                                            st.write(summary)
-
-                    elif key == "generate_final_answer":
-                        with final_answer_expander:
-                            st.markdown(value, unsafe_allow_html=False)  # Use markdown for rendering links
-
-                    steps.append({"step": key, "content": value})
-        
-        # Update status to complete
-        langgraph_status.update(state="complete", label="**Research Completed**")
-        
-        # Return both the final answer and the complete workflow state
-        if steps:
-            final_answer = steps[-1]["content"]
-            return {
-                "final_answer": final_answer,
-                "steps": steps  # Include all steps for debugging
-            }
-        else:
-            return {
-                "final_answer": "No response generated",
-                "steps": []
-            }
+                                        # Show documents if we have them
+                                        if query in documents_displayed:
+                                            docs = current_state['all_query_documents'].get(query, [])
+                                            st.markdown(f"### Retrieved Documents ({len(docs)})")
+                                            
+                                            if docs:
+                                                for j, doc in enumerate(docs):
+                                                    with st.expander(f"Document {j+1}: {doc.metadata.get('source', 'Unknown')}"):
+                                                        st.write(f"**Source:** {doc.metadata.get('source', 'Unknown')}")
+                                                        st.write(f"**Path:** {doc.metadata.get('path', 'Unknown')}")
+                                                        st.write(f"**Content:**\n{doc.page_content}")
+                                            else:
+                                                st.warning("No documents retrieved for this query.")
+                                        
+                                        # Display summary
+                                        st.markdown("### Summary of Retrieved Documents")
+                                        st.markdown(summary_map[query])
+                                    
+                                    # Mark this query's summary as displayed
+                                    summaries_displayed[query] = True
+                    
+                    # If there's a final answer, update the status to complete
+                    if 'final_answer' in output:
+                        langgraph_status.update(state="complete", label="**Research Complete ✅**")
+                        
+                        # Display LangGraph workflow visualization
+                        with results_container:
+                            st.subheader("LangGraph Workflow Visualization")
+                            try:
+                                st.markdown(generate_workflow_visualization())
+                            except Exception as e:
+                                st.error(f"Error generating workflow visualization: {str(e)}")
+                
+                # Return the final state when streaming completes
+                result = {
+                    "steps": current_state,
+                    "final_answer": current_state.get("final_answer", "No final answer generated")
+                }
+                
+                # Update elapsed time one final time
+                elapsed_time = time.time() - start_time
+                elapsed_time_placeholder.write(f"⏱️ Total elapsed time: {elapsed_time:.1f} seconds")
+                
+                # Return the result
+                return result
+            except Exception as e:
+                st.error(f"Error during research: {str(e)}")
+                langgraph_status.update(state="error", label=f"**Research Error: {str(e)}**")
+                return {
+                    "final_answer": f"Research encountered an error: {str(e)}",
+                    "steps": {}
+                }
     
     finally:
         # Final update of elapsed time
@@ -629,8 +773,8 @@ def main():
                     st.error(f"Error displaying response: {str(e)}")
                     st.markdown(str(final_answer), unsafe_allow_html=False)
                 
-                # Add an expander to display the final state
-                with st.expander("🔍 Debug: Final Workflow State", expanded=False):
+                # Add an expander to display the debug info (but hide it by default)
+                with st.expander("🔍 Debug Information", expanded=False):
                     # If assistant_response is a dict with steps, display it nicely
                     if isinstance(assistant_response, dict) and 'steps' in assistant_response:
                         st.json(assistant_response['steps'])
