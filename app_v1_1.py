@@ -14,9 +14,12 @@ from pathlib import Path
 warnings.filterwarnings("ignore", category=RuntimeWarning)
 logging.getLogger("streamlit").setLevel(logging.ERROR)
 
+# Import ResearcherState directly for better type hinting and consistency
+from src.assistant.state_v1_1 import ResearcherState
 from src.assistant.graph_v1_1 import researcher, researcher_graph
 from src.assistant.utils import get_report_structures, process_uploaded_files, clear_cuda_memory
 from src.assistant.rag_helpers_v1_1 import similarity_search_for_tenant, transform_documents, source_summarizer_ollama
+from src.assistant.vector_db_v1_1 import get_or_create_vector_db, search_documents, get_embedding_model_path
 from src.assistant.prompts import SUMMARIZER_SYSTEM_PROMPT
 # Use updated import path to avoid deprecation warning
 try:
@@ -99,9 +102,16 @@ def generate_response(user_input, enable_web_search, report_structure, max_searc
     # Clear CUDA memory before processing a new query
     clear_cuda_memory()
     
-    # Initialize state for the researcher
-    initial_state = {
+    # Initialize state for the researcher using ResearcherState structure
+    initial_state: ResearcherState = {
         "user_instructions": user_input,
+        "research_queries": [],
+        "retrieved_documents": [],
+        "search_summaries": [],
+        "current_position": 0,
+        "final_answer": "",
+        "detected_language": "",  # Will be populated by language detection
+        "additional_context": None,  # Optional field for context from document retrieval
         "quality_check_loops": quality_check_loops  # Add quality_check_loops to the initial state
     }
     
@@ -142,7 +152,7 @@ def generate_response(user_input, enable_web_search, report_structure, max_searc
         langgraph_status.update(label=f"**Researcher Step: {step}**")
         
         # If there's a final_answer, update the status to complete
-        if 'final_answer' in state:
+        if 'final_answer' in state and state['final_answer']:
             langgraph_status.update(state="complete", label="**Research Complete ✅**")
             
             # Display language detection result
@@ -157,6 +167,7 @@ def generate_response(user_input, enable_web_search, report_structure, max_searc
                 st.error(f"Error generating workflow visualization: {str(e)}")
             
             # Display important research steps results using expanders
+            # Use the field names from ResearcherState for consistency
             if 'research_queries' in state and 'all_query_documents' in state and 'search_summaries' in state:
                 st.subheader("Research Steps Results")
                 
@@ -308,7 +319,11 @@ def generate_response(user_input, enable_web_search, report_structure, max_searc
             
             # Display embedding model information
             from src.assistant.configuration import get_config_instance
-            embedding_model = get_config_instance().embedding_model
+            config_instance = get_config_instance()
+            embedding_model = config_instance.embedding_model
+            
+            # Display the current embedding model in the UI
+            st.info(f"🔍 Using embedding model: **{embedding_model}**")
             
             # If we're using an external database with a specific embedding model, make sure it's displayed correctly
             if use_ext_database and selected_database and 'embedding_model_name' in locals() and embedding_model_name:
@@ -352,8 +367,19 @@ def generate_response(user_input, enable_web_search, report_structure, max_searc
                 # Create containers for displaying results as they come in
                 results_container = st.container()
                 
-                # Initialize state tracking
-                current_state = {}
+                # Initialize state tracking using ResearcherState structure as a template
+                # This ensures we're using the same field names consistently
+                current_state: ResearcherState = {
+                    "user_instructions": initial_state["user_instructions"],
+                    "research_queries": [],
+                    "retrieved_documents": [],
+                    "search_summaries": [],
+                    "current_position": 0,
+                    "final_answer": "",
+                    "detected_language": "",
+                    "additional_context": None,
+                    "quality_check_loops": initial_state["quality_check_loops"]
+                }
                 research_queries_displayed = False
                 documents_displayed = {}  # Track which queries have had documents displayed
                 summaries_displayed = {}  # Track which queries have had summaries displayed
@@ -383,9 +409,12 @@ def generate_response(user_input, enable_web_search, report_structure, max_searc
                     current_state.update(output)
                     
                     # Display language detection result
+                    # This comes from ResearcherState.detected_language field
                     if 'detected_language' in output:
                         with results_container:
                             st.success(f"🌐 Detected language: **{output['detected_language']}**")
+                            # Store detected language for prompts
+                            language = output['detected_language']
                             
                     # Display research queries as they become available
                     if 'research_queries' in output and not research_queries_displayed:
@@ -548,13 +577,13 @@ def main():
     if "selected_report_structure" not in st.session_state:
         st.session_state.selected_report_structure = None
     if "max_search_queries" not in st.session_state:
-        st.session_state.max_search_queries = 5  # Default value of 5
+        st.session_state.max_search_queries = 3  # Default value of 3
     if "files_ready" not in st.session_state:
         st.session_state.files_ready = False  # Tracks if files are uploaded but not processed
     if "llm_model" not in st.session_state:
         st.session_state.llm_model = "deepseek-r1:latest"  # Default LLM model
     if "enable_web_search" not in st.session_state:
-        st.session_state.enable_web_search = False  # Default web search setting
+        st.session_state.enable_web_search = True  # Default web search setting
     if "enable_quality_checker" not in st.session_state:
         st.session_state.enable_quality_checker = True  # Default quality checker setting
     if "workflow_start_time" not in st.session_state:
@@ -566,9 +595,11 @@ def main():
     if "k_results" not in st.session_state:
         st.session_state.k_results = 3  # Default number of results to retrieve
     if "summarization_llm" not in st.session_state:
-        st.session_state.summarization_llm = "llama3.2"  # Default summarization LLM
+        st.session_state.summarization_llm = "deepseek-r1:latest"  # Default summarization LLM
     if "report_llm" not in st.session_state:
         st.session_state.report_llm = "deepseek-r1:latest"  # Default report writing LLM
+    if "detected_language" not in st.session_state:
+        st.session_state.detected_language = ""  # Will be populated by language detection
 
     # Sidebar configuration
     st.sidebar.title("Research Settings")
@@ -672,7 +703,7 @@ def main():
             # Display embedding model
             embedding_model_name = extract_embedding_model(selected_db)
             if embedding_model_name:
-                st.sidebar.info(f"Embedding Model: {embedding_model_name}")
+                st.sidebar.info(f"🔍 Embedding Model: {embedding_model_name}")
             
             # Number of results to retrieve
             st.session_state.k_results = st.sidebar.slider(
@@ -737,29 +768,31 @@ def main():
 
         # Generate and display assistant response
         report_structure = st.session_state.selected_report_structure["content"]
-        assistant_response = generate_response(
-            user_input, 
-            st.session_state.enable_web_search, 
-            report_structure,
-            st.session_state.max_search_queries,
-            st.session_state.report_llm,
-            st.session_state.enable_quality_checker,
-            st.session_state.quality_check_loops,
-            st.session_state.use_ext_database,
-            st.session_state.selected_database,
-            st.session_state.k_results
+        # Execute the summarization search with callback
+        # Pass parameters consistently based on ResearcherState structure
+        result = generate_response(
+            user_input=user_input,  # Maps to user_instructions in ResearcherState
+            enable_web_search=st.session_state.enable_web_search,
+            report_structure=report_structure,
+            max_search_queries=st.session_state.max_search_queries,
+            report_llm=st.session_state.report_llm,
+            enable_quality_checker=st.session_state.enable_quality_checker,
+            quality_check_loops=st.session_state.quality_check_loops,
+            use_ext_database=st.session_state.use_ext_database,
+            selected_database=st.session_state.selected_database if st.session_state.use_ext_database else None,
+            k_results=st.session_state.k_results
         )
 
         # Store assistant message - only store the final answer part for the chat history
-        st.session_state.messages.append({"role": "assistant", "content": assistant_response["final_answer"] if isinstance(assistant_response, dict) and "final_answer" in assistant_response else assistant_response})
+        st.session_state.messages.append({"role": "assistant", "content": result["final_answer"] if isinstance(result, dict) and "final_answer" in result else result})
 
         with st.chat_message("assistant"):
             try:
                 # Get the final answer content - since we're now getting plain markdown text directly
-                if isinstance(assistant_response, dict) and 'final_answer' in assistant_response:
-                    final_answer = assistant_response['final_answer']
+                if isinstance(result, dict) and 'final_answer' in result:
+                    final_answer = result['final_answer']
                 else:
-                    final_answer = str(assistant_response)
+                    final_answer = str(result)
                 
                 # Display with markdown for proper formatting
                 try:
@@ -775,20 +808,20 @@ def main():
                 
                 # Add an expander to display the debug info (but hide it by default)
                 with st.expander("🔍 Debug Information", expanded=False):
-                    # If assistant_response is a dict with steps, display it nicely
-                    if isinstance(assistant_response, dict) and 'steps' in assistant_response:
-                        st.json(assistant_response['steps'])
+                    # If result is a dict with steps, display it nicely
+                    if isinstance(result, dict) and 'steps' in result:
+                        st.json(result['steps'])
                     else:
                         # Otherwise display the entire response
-                        st.json(assistant_response)
+                        st.json(result)
             except Exception as e:
                 st.error(f"Error displaying response: {str(e)}")
-                st.markdown(str(assistant_response), unsafe_allow_html=False)
+                st.markdown(str(result), unsafe_allow_html=False)
 
             # Copy button below the AI message
             if PYPERCLIP_AVAILABLE:
                 if st.button("📋", key=f"copy_{len(st.session_state.messages)}"):
-                    copy_to_clipboard(assistant_response)
+                    copy_to_clipboard(result["final_answer"] if isinstance(result, dict) and "final_answer" in result else result)
 
     # Upload file logic
     if not st.session_state.use_ext_database:  # Only show upload option when not using external database
