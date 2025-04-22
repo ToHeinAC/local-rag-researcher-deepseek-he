@@ -10,17 +10,20 @@ import time
 from datetime import datetime, timedelta
 from pathlib import Path
 
+# Add project root to Python path to fix import issues
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../../../')))
+
 # Suppress specific PyTorch warnings
 warnings.filterwarnings("ignore", category=RuntimeWarning)
 logging.getLogger("streamlit").setLevel(logging.ERROR)
 
 # Import ResearcherState directly for better type hinting and consistency
-from src.assistant.state_v1_1 import ResearcherState
-from src.assistant.graph_v1_1 import researcher, researcher_graph
-from src.assistant.utils import get_report_structures, process_uploaded_files, clear_cuda_memory
-from src.assistant.rag_helpers_v1_1 import similarity_search_for_tenant, transform_documents, source_summarizer_ollama
-from src.assistant.vector_db_v1_1 import get_or_create_vector_db, search_documents, get_embedding_model_path
-from src.assistant.prompts import SUMMARIZER_SYSTEM_PROMPT
+from src.assistant.v1_1.state_v1_1 import ResearcherState
+from src.assistant.v1_1.graph_v1_1 import researcher_graph
+from src.assistant.v1_1.utils_v1_1 import get_report_structures, process_uploaded_files, clear_cuda_memory
+from src.assistant.v1_1.rag_helpers_v1_1 import similarity_search_for_tenant, transform_documents, source_summarizer_ollama
+from src.assistant.v1_1.vector_db_v1_1 import get_or_create_vector_db, search_documents, get_embedding_model_path
+from src.assistant.v1_1.prompts_v1_1 import SUMMARIZER_SYSTEM_PROMPT
 # Use updated import path to avoid deprecation warning
 try:
     from langchain_huggingface import HuggingFaceEmbeddings
@@ -39,8 +42,9 @@ except (ImportError, Exception):
 load_dotenv()
 
 # Define paths
+PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../../'))
 DEFAULT_DATA_FOLDER = os.path.join(os.path.dirname(__file__), "data")
-DATABASE_PATH = os.path.join(os.path.dirname(__file__), "database")
+DATABASE_PATH = os.path.join(PROJECT_ROOT, "database")
 
 # Set page config
 st.set_page_config(
@@ -104,15 +108,14 @@ def generate_response(user_input, enable_web_search, report_structure, max_searc
     
     # Initialize state for the researcher using ResearcherState structure
     initial_state: ResearcherState = {
-        "user_instructions": user_input,
+        "user_query": user_input,
         "research_queries": [],
-        "retrieved_documents": [],
-        "search_summaries": [],
+        "retrieved_documents": {},
+        "search_summaries": {},
         "current_position": 0,
         "final_answer": "",
         "detected_language": "",  # Will be populated by language detection
-        "additional_context": None,  # Optional field for context from document retrieval
-        "quality_check_loops": quality_check_loops  # Add quality_check_loops to the initial state
+        "additional_context": None  # Optional field for context from document retrieval
     }
     
     # Langgraph researcher config
@@ -120,8 +123,8 @@ def generate_response(user_input, enable_web_search, report_structure, max_searc
         "enable_web_search": enable_web_search,
         "report_structure": report_structure,
         "max_search_queries": max_search_queries,
-        "llm_model": report_llm,  # General purpose LLM model (used for most tasks)
-        "report_llm": report_llm,  # Specific LLM for report writing
+        "llm_model": st.session_state.report_llm,  # General purpose LLM model (used for most tasks)
+        "report_llm": st.session_state.report_llm,  # Specific LLM for report writing
         "summarization_llm": st.session_state.summarization_llm,  # Specific LLM for summarization
         "enable_quality_checker": enable_quality_checker,
         "quality_check_loops": quality_check_loops,
@@ -166,17 +169,19 @@ def generate_response(user_input, enable_web_search, report_structure, max_searc
             except Exception as e:
                 st.error(f"Error generating workflow visualization: {str(e)}")
             
+            # First display the final answer
+            if 'final_answer' in state and state['final_answer']:
+                st.subheader("Final Answer")
+                st.markdown(state['final_answer'])
+                
             # Display important research steps results using expanders
             # Use the field names from ResearcherState for consistency
-            if 'research_queries' in state and 'all_query_documents' in state and 'search_summaries' in state:
-                st.subheader("Research Steps Results")
+            if 'research_queries' in state and 'retrieved_documents' in state and 'search_summaries' in state:
+                st.subheader("Research Process Details")
                 
                 research_queries = state['research_queries']
-                all_query_documents = state['all_query_documents']
+                retrieved_documents = state['retrieved_documents']
                 search_summaries = state['search_summaries']
-                
-                # Create a mapping from query to summary for easier lookup
-                summary_map = {summary['query']: summary['content'] for summary in search_summaries}
                 
                 # Display each query with its retrieved documents and summary
                 for i, query in enumerate(research_queries):
@@ -184,7 +189,7 @@ def generate_response(user_input, enable_web_search, report_structure, max_searc
                         st.markdown(f"**Query:** {query}")
                         
                         # Display retrieved documents
-                        documents = all_query_documents.get(query, [])
+                        documents = retrieved_documents.get(query, [])
                         st.markdown(f"### Retrieved Documents ({len(documents)})")
                         
                         if documents:
@@ -198,8 +203,10 @@ def generate_response(user_input, enable_web_search, report_structure, max_searc
                         
                         # Display summary
                         st.markdown("### Summary of Retrieved Documents")
-                        if query in summary_map:
-                            st.markdown(summary_map[query])
+                        query_summaries = search_summaries.get(query, [])
+                        if query_summaries:
+                            for summary_doc in query_summaries:
+                                st.markdown(summary_doc.page_content)
                         else:
                             st.warning("No summary available for this query.")
             
@@ -230,7 +237,7 @@ def generate_response(user_input, enable_web_search, report_structure, max_searc
                     embed_model = get_embedding_model(embedding_model_name)
                     
                     # Update the global configuration to use this embedding model
-                    from src.assistant.configuration import update_embedding_model
+                    from src.assistant.v1_1.configuration_v1_1 import update_embedding_model
                     update_embedding_model(embedding_model_name)
                     
                     # Print confirmation of embedding model update
@@ -252,8 +259,8 @@ def generate_response(user_input, enable_web_search, report_structure, max_searc
                     st.write("### Retrieving Documents")
                     with st.spinner("Performing similarity search..."):
                         # Detect language for the query first
-                        from src.assistant.graph import detect_language
-                        language_result = detect_language({"user_instructions": user_input}, {"configurable": {"llm_model": report_llm}})
+                        from src.assistant.v1_1.graph_v1_1 import detect_language
+                        language_result = detect_language({"user_query": user_input}, {"configurable": {"llm_model": report_llm}})
                         detected_language = language_result.get("detected_language", "English")
                         
                         # Print detected language
@@ -318,36 +325,35 @@ def generate_response(user_input, enable_web_search, report_structure, max_searc
             st.write("### LangGraph Workflow Visualization")
             
             # Display embedding model information
-            from src.assistant.configuration import get_config_instance
-            config_instance = get_config_instance()
-            embedding_model = config_instance.embedding_model
-            
-            # Display the current embedding model in the UI
-            st.info(f"🔍 Using embedding model: **{embedding_model}**")
+            from src.assistant.v1_1.utils_v1_1 import get_configured_llm_model
+            from src.assistant.v1_1.configuration_v1_1 import get_config_instance
+            config = get_config_instance()
+            embedding_model_name = config.embedding_model
+            st.info(f"🤖 Using embedding model: **{embedding_model_name}**")
             
             # If we're using an external database with a specific embedding model, make sure it's displayed correctly
             if use_ext_database and selected_database and 'embedding_model_name' in locals() and embedding_model_name:
                 # Check if the configuration's embedding model matches what we expect from the database
-                if embedding_model != embedding_model_name:
-                    st.warning(f"⚠️ Configuration embedding model ({embedding_model}) doesn't match database embedding model ({embedding_model_name}). Using database model.")
+                if config.embedding_model != embedding_model_name:
+                    st.warning(f"⚠️ Configuration embedding model ({config.embedding_model}) doesn't match database embedding model ({embedding_model_name}). Using database model.")
                     # Force update the embedding model again to ensure it's correct
-                    from src.assistant.configuration import update_embedding_model
+                    from src.assistant.v1_1.configuration_v1_1 import update_embedding_model
                     update_embedding_model(embedding_model_name)
                     embedding_model = embedding_model_name
             
-            st.info(f"**Embedding Model:** {embedding_model}")
+            # Get the embedding model from the configuration
+            from src.assistant.v1_1.configuration_v1_1 import get_config_instance
+            config_instance = get_config_instance()
+            st.info(f"**Embedding Model:** {config_instance.embedding_model}")
             
             # Display the mermaid diagram
             st.markdown(f"```mermaid\n{generate_workflow_visualization()}\n```")
             
             # Display the actual langgraph visualization
-            st.write("### Actual LangGraph Workflow")
+            st.write("### LangGraph Workflow")
+            # Just use the mermaid visualization we already have
             try:
-                # Generate the visualization from the actual graph
-                graph_image_path = generate_langgraph_visualization()
-                
-                # Display the image
-                st.image(graph_image_path, caption="LangGraph Workflow (Generated from graph structure)", use_container_width=True)
+                st.markdown(f"```mermaid\n{generate_workflow_visualization()}\n```")
             except Exception as e:
                 st.error(f"Error generating graph visualization: {str(e)}")
             
@@ -370,19 +376,21 @@ def generate_response(user_input, enable_web_search, report_structure, max_searc
                 # Initialize state tracking using ResearcherState structure as a template
                 # This ensures we're using the same field names consistently
                 current_state: ResearcherState = {
-                    "user_instructions": initial_state["user_instructions"],
+                    "user_query": initial_state["user_query"],
                     "research_queries": [],
-                    "retrieved_documents": [],
-                    "search_summaries": [],
+                    "retrieved_documents": {},
+                    "search_summaries": {},
                     "current_position": 0,
                     "final_answer": "",
                     "detected_language": "",
-                    "additional_context": None,
-                    "quality_check_loops": initial_state["quality_check_loops"]
+                    "additional_context": None
                 }
                 research_queries_displayed = False
                 documents_displayed = {}  # Track which queries have had documents displayed
                 summaries_displayed = {}  # Track which queries have had summaries displayed
+                
+                # Variable to store detected language
+                language = ""
                 
                 # Initialize and run the graph with streaming
                 researcher_instance = researcher_graph.compile()
@@ -404,6 +412,23 @@ def generate_response(user_input, enable_web_search, report_structure, max_searc
                     if 'current_step' in output:
                         step = output['current_step']
                         langgraph_status.update(label=f"**Researcher Step: {step}**")
+                    
+                    # Display language detection result when it becomes available
+                    if 'detected_language' in output:
+                        with results_container:
+                            st.success(f"Detected language: **{output['detected_language']}**")
+                            # Store detected language for prompts
+                            language = output['detected_language']
+                    
+                    # Display research queries as they become available
+                    if 'research_queries' in output and not research_queries_displayed:
+                        research_queries = output['research_queries']
+                        with results_container:
+                            for i, query in enumerate(research_queries):
+                                with st.expander(f"Research Query {i+1}: {query}"):
+                                    st.markdown(f"**Query:** {query}")
+                                    st.info("Retrieving documents...")
+                        research_queries_displayed = True
                     
                     # Merge the new output into the current state
                     current_state.update(output)
@@ -771,7 +796,7 @@ def main():
         # Execute the summarization search with callback
         # Pass parameters consistently based on ResearcherState structure
         result = generate_response(
-            user_input=user_input,  # Maps to user_instructions in ResearcherState
+            user_input=user_input,  # Maps to user_query in ResearcherState
             enable_web_search=st.session_state.enable_web_search,
             report_structure=report_structure,
             max_search_queries=st.session_state.max_search_queries,

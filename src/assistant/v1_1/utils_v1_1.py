@@ -314,34 +314,12 @@ def clear_cuda_memory():
     Only has an effect if CUDA is available.
     """
     if torch.cuda.is_available():
-        # Clear the cache to free up memory
+        # Empty the cache
         torch.cuda.empty_cache()
-        print("CUDA memory cache cleared.")
-    else:
-        print("CUDA not available, no memory to clear.")
-
-def format_documents_as_plain_text(documents):
-    """
-    Format LangChain Documents into a plain text representation with ID, source, and content information.
-    
-    Args:
-        documents (list): List of LangChain Document objects to format
         
-    Returns:
-        str: A formatted string with document information in plain text format
-    """
-    if not documents:
-        return "No documents found."
-    
-    formatted_docs = []
-    for i, doc in enumerate(documents):
-        # Extract document ID, source, and content
-        doc_id = doc.metadata.get('id', f'Unknown-ID-{i}')
-        doc_source = doc.metadata.get('source', 'Unknown source')
-        doc_content = doc.page_content
+        # Force garbage collection
+        import gc
+        gc.collect()
         
-        # Format the document information
-        formatted_doc = f"Document{i+1}:\nID is: {doc_id},\nSOURCE is: {doc_source},\nCONTENT is: {doc_content}\n"
-        formatted_docs.append(formatted_doc)
-    
-    return "\n".join(formatted_docs)
+        print("CUDA memory cache cleared")
+    return

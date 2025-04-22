@@ -143,13 +143,40 @@ def transform_documents(documents: List[Document]) -> List[Dict[str, Any]]:
     return transformed_docs
 
 
-def source_summarizer_ollama(query: str, context_documents: List[Dict], language: str, system_message: str, llm_model: str = "deepseek-r1:latest") -> Dict[str, str]:
+def format_documents_as_plain_text(documents):
+    """
+    Format LangChain Documents into a plain text representation with ID, source, and content information.
+    
+    Args:
+        documents (list): List of LangChain Document objects to format
+        
+    Returns:
+        str: A formatted string with document information in plain text format
+    """
+    if not documents:
+        return "No documents found."
+    
+    formatted_docs = []
+    for i, doc in enumerate(documents):
+        # Extract document ID, source, and content
+        doc_id = doc.metadata.get('id', f'Unknown-ID-{i}')
+        doc_source = doc.metadata.get('source', 'Unknown source')
+        doc_content = doc.page_content
+        
+        # Format the document information
+        formatted_doc = f"Document{i+1}:\nID is: {doc_id},\nSOURCE is: {doc_source},\nCONTENT is: {doc_content}\n"
+        formatted_docs.append(formatted_doc)
+    
+    return "\n".join(formatted_docs)
+
+
+def source_summarizer_ollama(query: str, context_documents: List, language: str, system_message: str, human_message: str, llm_model: str = "deepseek-r1:latest") -> Dict[str, str]:
     """
     Summarizes source documents using Ollama with the simplified workflow.
     
     Args:
         query (str): User query to guide the summarization
-        context_documents (list): List of documents to summarize
+        context_documents (list): List of documents to summarize (can be dicts or Document objects)
         language (str): Language to use for the summary
         system_message (str): System prompt for the model
         llm_model (str): Ollama model name to use
@@ -158,14 +185,33 @@ def source_summarizer_ollama(query: str, context_documents: List[Dict], language
         dict: Dictionary containing the summary content
     """
     # Import here to avoid circular imports
-    from src.assistant.utils import invoke_ollama, parse_output
+    from src.assistant.v1_1.utils_v1_1 import invoke_ollama, parse_output
     
     # Format the documents into a readable string
     formatted_docs = ""
     for i, doc in enumerate(context_documents):
-        # Extract document content and metadata
-        content = doc.get("content", "No content available")
-        metadata = doc.get("metadata", {})
+        # Handle different document types (dict, Document object, or string)
+        if isinstance(doc, dict):
+            # If it's a dictionary, use get method
+            content = doc.get("content", "No content available")
+            metadata = doc.get("metadata", {})
+        elif hasattr(doc, "page_content") and hasattr(doc, "metadata"):
+            # If it's a Document object, access attributes directly
+            content = doc.page_content
+            metadata = doc.metadata
+        elif isinstance(doc, str):
+            # If it's a string, use it directly as content
+            content = doc
+            metadata = {}
+        else:
+            # For any other type, try to convert to string
+            print(f"  [WARNING] Unknown document type: {type(doc)}, attempting to convert to string")
+            try:
+                content = str(doc)
+                metadata = {}
+            except:
+                content = "Error: Could not process document"
+                metadata = {}
         
         # Create document header with metadata
         source = metadata.get("source", "Unknown Source")
@@ -204,12 +250,7 @@ def source_summarizer_ollama(query: str, context_documents: List[Dict], language
         formatted_docs += f"\n---\nDOCUMENT {i+1}: {source}\n---\n{content}\n\n"
     
     # Create the human prompt
-    human_prompt = f"""User Query: {query}
-
-Please analyze the following documents and provide a comprehensive summary in {language} that addresses the user's query:
-
-{formatted_docs}
-"""
+    human_prompt = human_message
     
     # Call Ollama to generate the summary
     try:

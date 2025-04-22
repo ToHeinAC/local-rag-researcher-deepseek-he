@@ -3,10 +3,10 @@ from typing_extensions import Literal
 from langgraph.constants import Send
 from langgraph.graph import START, END, StateGraph
 from langchain_core.runnables.config import RunnableConfig
-from src.assistant.configuration import Configuration
-from src.assistant.vector_db_v1_1 import get_or_create_vector_db, search_documents, get_embedding_model_path
-from src.assistant.state_v1_1 import ResearcherState
-from src.assistant.prompts import (
+from src.assistant.v1_1.configuration_v1_1 import Configuration, get_config_instance
+from src.assistant.v1_1.vector_db_v1_1 import get_or_create_vector_db, search_documents, get_embedding_model_path
+from src.assistant.v1_1.state_v1_1 import ResearcherState
+from src.assistant.v1_1.prompts_v1_1 import (
     # Language detection prompts
     LANGUAGE_DETECTOR_SYSTEM_PROMPT, LANGUAGE_DETECTOR_HUMAN_PROMPT,
     # Research query generation prompts
@@ -16,8 +16,8 @@ from src.assistant.prompts import (
     # Report writing prompts
     REPORT_WRITER_SYSTEM_PROMPT, REPORT_WRITER_HUMAN_PROMPT,
 )
-from src.assistant.utils import format_documents_with_metadata, invoke_ollama, parse_output, tavily_search, DetectedLanguage, Queries
-from src.assistant.rag_helpers_v1_1 import source_summarizer_ollama
+from src.assistant.utils_v1_1 import format_documents_with_metadata, invoke_ollama, parse_output, tavily_search, DetectedLanguage, Queries
+from src.assistant.v1_1.rag_helpers_v1_1 import source_summarizer_ollama, format_documents_as_plain_text
 import re
 import time
 
@@ -28,7 +28,7 @@ researcher_graph = StateGraph(ResearcherState)
 # Detect language of user query
 def detect_language(state: ResearcherState, config: RunnableConfig):
     print("--- Detecting language of user query ---")
-    query = state["user_instructions"]  # Get the query from user_instructions
+    query = state["user_query"]  # Get the query from user_query
     llm_model = config["configurable"].get("llm_model", "deepseek-r1:latest")
     
     # First check if a language is already set in the config (from GUI)
@@ -65,18 +65,28 @@ def detect_language(state: ResearcherState, config: RunnableConfig):
 # Display embedding model information
 def display_embedding_model_info(state: ResearcherState):
     """Display information about which embedding model is being used."""
-    from src.assistant.configuration import get_config_instance
     config = get_config_instance()
     embedding_model = config.embedding_model
     print(f"\n=== Using embedding model: {embedding_model} ===\n")
-    return {}
+    # Return a dictionary with a key for embedding_model - LangGraph nodes must return dictionaries
+    return {"embedding_model": embedding_model, "current_step": "display_embedding_model_info"}
 
 def generate_research_queries(state: ResearcherState, config: RunnableConfig):
+    """
+    Generate research queries based on the user's instructions.
+
+    Args:
+        state (ResearcherState): The current state of the researcher.
+        config (RunnableConfig): The configuration for the graph.
+
+    Returns:
+        dict: A state update containing the generated research queries as a list.
+    """
     print("--- Generating research queries ---")
-    query = state["user_instructions"]  # Get the query from user_instructions
+    query = state["user_query"]  # Get the query from user_query
     detected_language = state["detected_language"]
     max_queries = config["configurable"].get("max_search_queries", 3)
-    llm_model = config["configurable"].get("summarization_llm", "deepseek-r1:latest")
+    llm_model = config["configurable"].get("report_llm", "deepseek-r1:latest")
     
     # Get additional context if available
     additional_context = state.get("additional_context", "")
@@ -103,14 +113,23 @@ def generate_research_queries(state: ResearcherState, config: RunnableConfig):
         output_format=Queries
     )
     
-    # Add the original human query to the list of research queries
     all_queries = result.queries
+    all_queries.insert(0, query)
+    assert isinstance(all_queries, list), "all_queries must be a list"
     
     return {"research_queries": all_queries}
 
 
 def retrieve_rag_documents(state: ResearcherState, config: RunnableConfig):
-    """Retrieve documents from the RAG database for all research queries."""
+    """Retrieve documents from the RAG database for all research queries.
+    
+    Args:
+        state (ResearcherState): The current state of the researcher.
+        config (RunnableConfig): The configuration for the graph.
+    
+    Returns:
+        dict: A state update containing the retrieved documents in form of a dictionary with query as key and list of langchain Document objects.
+    """
     print("--- Retrieving documents for all research queries ---")
     # Print current state keys for debugging
     print(f"  [DEBUG] Current state keys: {list(state.keys())}")
@@ -121,7 +140,7 @@ def retrieve_rag_documents(state: ResearcherState, config: RunnableConfig):
     if not research_queries:
         # If no research queries were generated, use the original user query
         print("  [WARNING] No research queries found, using original user query")
-        research_queries = [state["user_instructions"]]
+        research_queries = [state["user_query"]]
     
     print(f"  [INFO] Processing {len(research_queries)} research queries")
     
@@ -132,9 +151,8 @@ def retrieve_rag_documents(state: ResearcherState, config: RunnableConfig):
     k_results = config["configurable"].get("k_results", 3)  # Default to 3 if not specified
     
     # Display embedding model information
-    from src.assistant.configuration import get_config_instance
-    config_obj = get_config_instance()
-    embedding_model = config_obj.embedding_model
+    config = get_config_instance()
+    embedding_model = config.embedding_model
     
     # Get the detected language from the global configuration if available
     if hasattr(config_obj, 'detected_language'):
@@ -179,30 +197,45 @@ def retrieve_rag_documents(state: ResearcherState, config: RunnableConfig):
     for query, docs in all_query_documents.items():
         print(f"  [DEBUG] Query '{query[:50]}...' has {len(docs)} documents")
     
+    assert isinstance(all_query_documents, dict), "all_query_documents must be a dictionary"
+    assert len(all_query_documents) == len(research_queries), "all_query_documents must have the same length as research_queries"
+
     # In LangGraph, the returned dictionary represents the specific state updates
     # We need to make sure this is properly merged with the existing state
     return {
-        "all_query_documents": all_query_documents,
-        "research_queries": research_queries  # Include for reference
+        "retrieved_documents": all_query_documents
     }
 
 
 def summarize_query_research(state: ResearcherState, config: RunnableConfig):
+    """
+    Summarize the retrieved documents for each research query.
+    
+    Args:
+        state (ResearcherState): The current state of the researcher.
+        config (RunnableConfig): The configuration for the researcher.
+    
+    Returns:
+        dict: A state update containing the search summaries in form of a dictionary with query as key and list of langchain Document objects.
+    """
     print("--- Summarizing all query research ---")
     # Print current state keys for debugging
     print(f"  [DEBUG] Current state keys: {list(state.keys())}")
     
     # Get all query documents from the previous step
-    all_query_documents = state.get("all_query_documents", {})
+    all_query_documents = state.get("retrieved_documents", {})
     research_queries = state.get("research_queries", [])
     
+    # Dictionary to store formatted plain text documents for each query
+    all_formatted_documents = {}
+    
     # Debug the all_query_documents structure if it exists
-    if "all_query_documents" in state:
-        print(f"  [DEBUG] Found all_query_documents in state with {len(state['all_query_documents'])} queries")
-        for query, docs in state['all_query_documents'].items():
+    if "retrieved_documents" in state:
+        print(f"  [DEBUG] Found retrieved_documents in state with {len(state['retrieved_documents'])} queries")
+        for query, docs in state['retrieved_documents'].items():
             print(f"  [DEBUG] Query '{query[:50]}...' has {len(docs)} documents")
     else:
-        print("  [DEBUG] all_query_documents not found in state!")
+        print("  [DEBUG] retrieved_documents not found in state!")
     
     if not all_query_documents:
         print("  [WARNING] No query documents found in state")
@@ -211,7 +244,7 @@ def summarize_query_research(state: ResearcherState, config: RunnableConfig):
             print(f"  [INFO] Creating empty summaries for {len(research_queries)} queries")
         else:
             print("  [WARNING] No research queries found either")
-            research_queries = [state["user_instructions"]]
+            research_queries = [state["user_query"]]
             print(f"  [INFO] Using original query: '{research_queries[0]}'")
     
     # Get language and LLM model for summarization
@@ -220,13 +253,13 @@ def summarize_query_research(state: ResearcherState, config: RunnableConfig):
     print(f"  [Using language: {detected_language}]")
     print(f"  [Using summarization LLM: {summarization_llm}]")
     
-    # Initialize list to store all summaries
-    all_summaries = []
-    
     # Format the system prompt for summarization
     system_prompt = SUMMARIZER_SYSTEM_PROMPT.format(
         language=detected_language
     )
+    
+    # Initialize dictionary to store summaries for each query
+    all_summaries = {}
     
     # Process each query and its documents
     for i, query in enumerate(research_queries):
@@ -245,8 +278,20 @@ def summarize_query_research(state: ResearcherState, config: RunnableConfig):
                 summary = f"No relevant documents were found in the database for the query: '{query}'"
             print("  [WARNING] No documents found for this query, using fallback summary")
         else:
-            # Format documents for summarization
+            # Format documents as plain text with ID, source, and content information
+            plain_text_docs = format_documents_as_plain_text(documents)
+            
+            # Store the formatted plain text documents for this query
+            all_formatted_documents[query] = plain_text_docs
+            
+            # Format documents for summarization (using the original method for source_summarizer_ollama)
             context_documents = format_documents_with_metadata(documents, preserve_original=True)
+            
+            # Format the human prompt for this specific query and documents
+            human_prompt = SUMMARIZER_HUMAN_PROMPT.format(
+                query=query,
+                documents=context_documents
+            )
             
             # Use source_summarizer_ollama to create a summary
             try:
@@ -255,6 +300,7 @@ def summarize_query_research(state: ResearcherState, config: RunnableConfig):
                     context_documents=context_documents,
                     language=detected_language,
                     system_message=system_prompt,
+                    human_message=human_prompt,
                     llm_model=summarization_llm
                 )
                 
@@ -268,35 +314,47 @@ def summarize_query_research(state: ResearcherState, config: RunnableConfig):
                 else:
                     summary = f"Error generating summary for query: '{query}'"
         
-        # Create a labeled summary object
-        labeled_summary = {
-            "query": query,
-            "content": summary,
-            "position": i
-        }
+        # Create a document object for the summary
+        from langchain_core.documents import Document
+        summary_doc = Document(page_content=summary, metadata={"position": i, "query": query})
         
-        # Add to our list of summaries
-        all_summaries.append(labeled_summary)
+        # Add to our dictionary of summaries, with query as key and list of documents as value
+        if query not in all_summaries:
+            all_summaries[query] = []
+        all_summaries[query].append(summary_doc)
         print(f"  [INFO] Added summary for query '{query}'")
     
     print(f"  [INFO] Generated {len(all_summaries)} summaries for all queries")
+
+    assert isinstance(all_summaries, dict), "all_summaries must be a dictionary"
+    assert len(all_summaries) == len(research_queries), "all_summaries must have the same length as research_queries"
     
     # Return all summaries, but also preserve the all_query_documents in the state
     # In LangGraph, we need to explicitly return all state keys we want to preserve
     result = {
         "search_summaries": all_summaries,
-        "all_query_documents": all_query_documents,  # Always return this regardless of source
-        "research_queries": research_queries  # Ensure research_queries is preserved
+        "formatted_documents": all_formatted_documents  # Add the formatted documents to the state
     }
     
     # Include additional context if it exists
     if "additional_context" in state:
         result["additional_context"] = state["additional_context"]
     
+    print(f"  [INFO] Added {len(all_formatted_documents)} formatted document sets to state")
     return result
 
 
 def generate_final_answer(state: ResearcherState, config: RunnableConfig):
+    """
+    Generate a final answer based on the search summaries.
+    
+    Args:
+        state (ResearcherState): The current state of the researcher.
+        config (RunnableConfig): The configuration for the graph.
+    
+    Returns:
+        dict: A state update containing the final answer in form of a string.
+    """
     print("--- Generating final answer ---")
     # Print current state keys for debugging
     print(f"  [DEBUG] Current state keys: {list(state.keys())}")
@@ -324,10 +382,6 @@ def generate_final_answer(state: ResearcherState, config: RunnableConfig):
     search_summaries = state.get("search_summaries", [])
     print(f"  [DEBUG] Search summaries found: {len(search_summaries) if search_summaries else 0}")
     
-    # Get research queries for reference
-    research_queries = state.get("research_queries", [])
-    print(f"  [DEBUG] Research queries found: {len(research_queries) if research_queries else 0}")
-    
     # Process and format the accumulated summaries
     if not search_summaries:
         information = "No search summaries were found. Please try again with a different query."
@@ -336,29 +390,65 @@ def generate_final_answer(state: ResearcherState, config: RunnableConfig):
         # Format the information by organizing all summaries
         formatted_info = []
         
-        # Process labeled summaries (new format with query, content, position)
-        if isinstance(search_summaries[0], dict) and "query" in search_summaries[0] and "content" in search_summaries[0]:
-            # Sort summaries by position for consistent ordering
-            sorted_summaries = sorted(search_summaries, key=lambda x: x.get("position", 0))
-            
-            for i, summary_obj in enumerate(sorted_summaries):
-                query = summary_obj.get("query", f"Research Query {i+1}")
-                content = summary_obj.get("content", "")
-                
-                # Add formatted content with query and summary
-                formatted_info.append(f"## Research Query {i+1}: {query}\n\n{content}\n")
-            
-            # Join all formatted summaries
-            information = "\n\n".join(formatted_info)
+        # Process search_summaries as a dictionary where keys are queries and values are lists of Document objects
+        print(f"  [DEBUG] Processing search_summaries as a dictionary with {len(search_summaries)} queries")
         
-        # Fallback for older format summaries (plain strings)
-        elif all(isinstance(s, str) for s in search_summaries):
-            for i, summary in enumerate(search_summaries):
-                # Try to pair with research query if available
-                query = research_queries[i] if i < len(research_queries) else f"Research Query {i+1}"
-                formatted_info.append(f"## Research Query {i+1}: {query}\n\n{summary}\n")
+        # Sort queries by their position metadata if available
+        sorted_queries = []
+        for query, docs in search_summaries.items():
+            # Get position from the first document's metadata if available
+            position = docs[0].metadata.get("position", 0) if docs else 0
+            sorted_queries.append((query, position))
+        
+        # Sort queries by position
+        sorted_queries.sort(key=lambda x: x[1])
+        
+        # Process each query and its documents
+        for i, (query, _) in enumerate(sorted_queries):
+            docs = search_summaries[query]
             
-            information = "\n\n".join(formatted_info)
+            # Combine all document content for this query
+            content = "\n".join([doc.page_content for doc in docs])
+            
+            # Add formatted content with query and summary
+            formatted_info.append(f"## Research Query {i+1}: {query}\n\n{content}\n")
+        
+        # Join all formatted summaries
+        information = "\n\n".join(formatted_info)
+        
+        # Fallback for empty formatted_info or if search_summaries is not a dictionary
+        if not formatted_info:
+            # Check if search_summaries is a list (old format) instead of a dictionary
+            if isinstance(search_summaries, list):
+                print(f"  [DEBUG] Processing search_summaries as a list with {len(search_summaries)} items")
+                research_queries = state.get("research_queries", [])
+                
+                for i, summary in enumerate(search_summaries):
+                    # Handle different possible formats
+                    if isinstance(summary, dict) and "content" in summary:
+                        query = summary.get("query", f"Research Query {i+1}")
+                        content = summary.get("content", "")
+                    elif isinstance(summary, str):
+                        query = research_queries[i] if i < len(research_queries) else f"Research Query {i+1}"
+                        content = summary
+                    else:
+                        # Try to extract content from Document object if that's what it is
+                        try:
+                            query = research_queries[i] if i < len(research_queries) else f"Research Query {i+1}"
+                            content = getattr(summary, "page_content", str(summary))
+                        except:
+                            query = f"Research Query {i+1}"
+                            content = str(summary)
+                    
+                    # Add formatted content with query and summary
+                    formatted_info.append(f"## Research Query {i+1}: {query}\n\n{content}\n")
+                
+                # Join all formatted summaries
+                information = "\n\n".join(formatted_info)
+            else:
+                # If we get here, something unexpected happened
+                information = "Could not process search summaries due to unexpected format."
+                print(f"  [WARNING] Unexpected search_summaries format: {type(search_summaries)}")
         
         # Handle any other format as stringified content
         else:
@@ -370,7 +460,7 @@ def generate_final_answer(state: ResearcherState, config: RunnableConfig):
     
     # Format the human prompt
     human_prompt = REPORT_WRITER_HUMAN_PROMPT.format(
-        instruction=state["user_instructions"],
+        instruction=state["user_query"],
         report_structure=report_structure,
         information=information,
         language=detected_language
@@ -428,8 +518,7 @@ def generate_final_answer(state: ResearcherState, config: RunnableConfig):
     # Set the final_answer in the state and return it with the node name
     # This ensures both the state is updated and the UI can access it
     return {
-        "final_answer": report_content,  # Update the state's final_answer field
-        "generate_final_answer": report_content  # Return for the UI display
+        "final_answer": report_content
     }
 
 

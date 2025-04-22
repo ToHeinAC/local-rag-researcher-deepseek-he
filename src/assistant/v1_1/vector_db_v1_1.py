@@ -48,7 +48,7 @@ def get_vector_db_path():
 def get_or_create_vector_db():
     """Get or create the vector DB."""
     # Import here to avoid circular imports
-    from src.assistant.rag_helpers_v1_1 import load_embed, get_tenant_vectorstore
+    from src.assistant.v1_1.rag_helpers_v1_1 import load_embed, get_tenant_vectorstore
     
     embeddings = get_embedding_model()
     
@@ -100,7 +100,7 @@ def get_or_create_vector_db():
 def add_documents(documents):
     """Add new documents to the existing vector store."""
     # Import here to avoid circular imports
-    from src.assistant.rag_helpers_v1_1 import load_embed
+    from src.assistant.v1_1.rag_helpers_v1_1 import load_embed
     
     embeddings = get_embedding_model()
     tenant_id = DEFAULT_TENANT_ID
@@ -141,7 +141,7 @@ def search_documents(query, k=3, language="English"):
     """Search for documents in the vector store."""
     # Import clear_cuda_memory here to avoid circular imports
     from src.assistant.utils import clear_cuda_memory
-    from src.assistant.rag_helpers_v1_1 import similarity_search_for_tenant
+    from src.assistant.v1_1.rag_helpers_v1_1 import similarity_search_for_tenant
     
     # Clear CUDA memory before embedding
     clear_cuda_memory()
