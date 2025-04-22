@@ -1,7 +1,8 @@
 import os, re
 from datetime import datetime
+from typing import List
 from langchain_core.runnables import chain
-from langchain.schema import Document
+from langchain_core.documents import Document
 # Use updated import path to avoid deprecation warning
 try:
     from langchain_chroma import Chroma
@@ -27,6 +28,10 @@ except LookupError:
     nltk.download('punkt')
 
 from nltk.tokenize import word_tokenize
+from src.assistant.v1_1.prompts_v1_1 import (
+    # Document summarization prompts
+    SUMMARIZER_HUMAN_PROMPT, SUMMARIZER_SYSTEM_PROMPT
+)
 
 # Define constants - must match the value in vector_db.py
 VECTOR_DB_PATH = "database"
@@ -170,97 +175,91 @@ def format_documents_as_plain_text(documents):
     return "\n".join(formatted_docs)
 
 
-def source_summarizer_ollama(query: str, context_documents: List, language: str, system_message: str, human_message: str, llm_model: str = "deepseek-r1:latest") -> Dict[str, str]:
-    """
-    Summarizes source documents using Ollama with the simplified workflow.
+def source_summarizer_ollama(query, context_documents, language, system_message, llm_model="deepseek-r1"):
+    # Make sure language is explicitly passed through the entire pipeline
+    print(f"Generating summary using language: {language}")
+    # Override system_message to ensure language is set properly
+    from src.assistant.v1_1.prompts_v1_1 import SUMMARIZER_SYSTEM_PROMPT
+    system_message = SUMMARIZER_SYSTEM_PROMPT.format(language=language)
+    # Check if context_documents is already a formatted string
+    if isinstance(context_documents, str):
+        formatted_context = context_documents
+    else:
+        # Handle the case where context_documents is a list of dictionary objects
+        try:
+            formatted_context = "\n".join(
+                f"Content: {doc['content']}\nSource: {doc['metadata']['name']}\nPath: {doc['metadata']['path']}"
+                for doc in context_documents
+            )
+        except (TypeError, KeyError):
+            # Fallback: try to use the documents as they are
+            formatted_context = str(context_documents)
+    #formatted_context = "\n".join(
+    #    f"{str(doc)}"
+    #    for doc in context_documents
+    #)
+    prompt = SUMMARIZER_HUMAN_PROMPT.format(query=query, documents=formatted_context, language=language)
     
-    Args:
-        query (str): User query to guide the summarization
-        context_documents (list): List of documents to summarize (can be dicts or Document objects)
-        language (str): Language to use for the summary
-        system_message (str): System prompt for the model
-        llm_model (str): Ollama model name to use
-        
-    Returns:
-        dict: Dictionary containing the summary content
-    """
-    # Import here to avoid circular imports
-    from src.assistant.v1_1.utils_v1_1 import invoke_ollama, parse_output
+    # Initialize ChatOllama with the specified model and temperature
+    llm = Ollama(model=llm_model, temperature=0.1, repeat_penalty=1.2) 
+    # For RAG systems like your summarizer, consider:
+    #    Using lower temperatures (0.1-0.3) for factual accuracy
+    #   Combining with repeat_penalty=1.1-1.3 to avoid redundant content
+    #   Monitoring token usage with num_ctx for long documents
     
-    # Format the documents into a readable string
-    formatted_docs = ""
-    for i, doc in enumerate(context_documents):
-        # Handle different document types (dict, Document object, or string)
-        if isinstance(doc, dict):
-            # If it's a dictionary, use get method
-            content = doc.get("content", "No content available")
-            metadata = doc.get("metadata", {})
-        elif hasattr(doc, "page_content") and hasattr(doc, "metadata"):
-            # If it's a Document object, access attributes directly
-            content = doc.page_content
-            metadata = doc.metadata
-        elif isinstance(doc, str):
-            # If it's a string, use it directly as content
-            content = doc
-            metadata = {}
-        else:
-            # For any other type, try to convert to string
-            print(f"  [WARNING] Unknown document type: {type(doc)}, attempting to convert to string")
-            try:
-                content = str(doc)
-                metadata = {}
-            except:
-                content = "Error: Could not process document"
-                metadata = {}
-        
-        # Create document header with metadata
-        source = metadata.get("source", "Unknown Source")
-        path = metadata.get("path", "")
-        
-        # Handle path validation without character-by-character errors
-        if path:
-            try:
-                # Check if path is a string
-                if not isinstance(path, str):
-                    print(f"  [WARNING] Path is not a string: {type(path)}")
-                    path = ""
-                # Check for special characters or non-printable characters
-                elif any(ord(c) < 32 or ord(c) > 126 for c in path) or '\\x' in repr(path):
-                    print(f"  [WARNING] Path contains special or non-printable characters, sanitizing")
-                    # Sanitize by removing problematic characters
-                    path = re.sub(r'[^\w\-\.\s\/:]+', '', path)
-                # Validate general path format
-                elif not re.match(r'^[\w\-\.\s\/:]+$', path.strip()):
-                    print(f"  [WARNING] Invalid path format, sanitizing: {path[:20]}...")
-                    path = re.sub(r'[^\w\-\.\s\/:]+', '', path)
-                else:
-                    # Valid path
-                    if len(path) > 100:
-                        print(f"  [DEBUG] Valid path extracted (truncated): {path[:50]}...")
-                    else:
-                        print(f"  [DEBUG] Valid path extracted: {path}")
-            except Exception as e:
-                print(f"  [WARNING] Error processing path: {type(e).__name__}")
-                path = ""  # Set to empty to avoid further issues
-        else:
-            # No path in metadata
-            path = ""
-        
-        # Format this document with its source
-        formatted_docs += f"\n---\nDOCUMENT {i+1}: {source}\n---\n{content}\n\n"
+    # Format messages for LangChain
+    messages = [
+        SystemMessage(content=system_message),
+        HumanMessage(content=prompt)
+    ]
     
-    # Create the human prompt
-    human_prompt = human_message
+    # Get response from the model
+    response = llm.invoke(messages)
     
-    # Call Ollama to generate the summary
+    # Extract content from response
+    response_content = response
+    
+    # Clean markdown formatting if present
     try:
-        response = invoke_ollama(model=llm_model, system_prompt=system_message, user_prompt=human_prompt)
-        
-        # Parse the response to extract just the content if using the parse_output function
-        parsed_output = parse_output(response).get("response", response)
-        
-        return {"content": parsed_output}
-    except Exception as e:
-        print(f"Error generating summary: {str(e)}")
-        # Return a fallback summary in case of error
-        return {"content": f"Error generating summary: {str(e)}. Please try again with a different model or query."}
+        final_content = re.sub(r"<think>.*?</think>", "", response_content, flags=re.DOTALL).strip()
+    except:
+        final_content = response_content.strip()
+
+    # Extract metadata from all documents with added checks for structure
+    document_names = []
+    for doc in context_documents:
+        if isinstance(doc, dict) and 'metadata' in doc and isinstance(doc['metadata'], dict):
+            # Try to get name from metadata, with fallbacks to source or id if name doesn't exist
+            if 'name' in doc['metadata']:
+                document_names.append(doc['metadata']['name'])
+            elif 'source' in doc['metadata']:
+                document_names.append(doc['metadata']['source'])
+            elif 'id' in doc['metadata']:
+                # Extract filename from id if it contains a path
+                doc_id = doc['metadata']['id']
+                if ':' in doc_id:
+                    doc_id = doc_id.split(':', 1)[0]  # Get the part before the first colon
+                document_names.append(doc_id)
+            else:
+                # Use a default name if no identifiers are available
+                document_names.append(f"Document-{len(document_names)+1}")
+    
+    document_paths = []
+    for doc in context_documents:
+        if isinstance(doc, dict) and 'metadata' in doc and isinstance(doc['metadata'], dict):
+            # Try to get path from metadata, with fallback to source if path doesn't exist
+            if 'path' in doc['metadata']:
+                document_paths.append(doc['metadata']['path'])
+            elif 'source' in doc['metadata']:
+                document_paths.append(doc['metadata']['source'])
+            else:
+                # Use a default path if no path information is available
+                document_paths.append("Unknown path")
+
+    return {
+        "content": final_content,
+        "metadata": {
+            "name": document_names,
+            "path": document_paths
+        }
+    }   

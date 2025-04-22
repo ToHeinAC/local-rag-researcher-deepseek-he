@@ -14,13 +14,13 @@ LANGUAGE_DETECTOR_HUMAN_PROMPT = """Detect the language of this query: {query}""
 RESEARCH_QUERY_WRITER_SYSTEM_PROMPT = """You are a research query generator.
 Generate necessary queries to complete the user's research goal. Keep queries concise and relevant.
 
-Your output must only be a JSON object containing a single key "queries":
+Your output must only be a JSON object containing a single key "queries" followed by a list of individual research queries:
 {{ "queries": ["Query 1", "Query 2",...] }}
 
 * Always include the original user query in the queries.
 * Generate up to {max_queries} additional queries as needed.
 * Today is: {date}
-* Strictly use the following language: {language}
+* Strictly return questions in the following language: {language}
 """
 
 RESEARCH_QUERY_WRITER_HUMAN_PROMPT = """Generate research queries for this user instruction in {language} language: {query}
@@ -28,7 +28,7 @@ RESEARCH_QUERY_WRITER_HUMAN_PROMPT = """Generate research queries for this user 
 The additional context is:
 {additional_context}
 
-Strictly use the following language: {language}"""
+Strictly return questions in the following language: {language}"""
 
 
 SUMMARIZER_SYSTEM_PROMPT_old = """
@@ -79,7 +79,7 @@ RELEVANCE_EVALUATOR_HUMAN_PROMPT = """Evaluate the relevance of the retrieved do
 # Document summarization prompts
 SUMMARIZER_SYSTEM_PROMPT = """You are an expert document summarizer.
 Forward the information from the provided documents that is relevant to the query without adding external information or personal opinions.
-For your response, STRICTLY use the following language: {language}
+CRUCIAL: You MUST write the response STRICTLY in the following language: {language}
 
 Important guidelines:
 1. For citations, ALWAYS use the EXACT format [Source_filename] after each fact. 
@@ -95,16 +95,18 @@ You find the Source_filename in the provided metadata with the following structu
 7. Do not give any prefix or suffix to the summary, just your summary without any thinking passages
 
 You will be provided with the documents and the query.
-"""
+
+Here comes your task:"""
 
 SUMMARIZER_HUMAN_PROMPT = """ 
-Query:
-{query}
+Query: {query}
 
 Documents:
 {documents}
 
 INSTRUCTION: Extract and compile all relevant information from the Documents in form of an executive deep summary that answers the Query.
+IMPORTANT: You MUST write your entire response in {language} language only.
+Use proper citations in the correct format [Source_filename] after each fact.
 """
 
 

@@ -8,8 +8,9 @@ import re
 # Add the parent directory to the path to import from src
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from src.assistant.rag_helpers import load_embed, similarity_search_for_tenant
+from src.assistant.rag_helpers import load_embed, similarity_search_for_tenant, get_tenant_collection_name
 from langchain_community.embeddings import HuggingFaceEmbeddings
+from langchain_community.vectorstores import Chroma
 from src.assistant.rag_helpers import transform_documents, source_summarizer_ollama
 from src.assistant.prompts import SUMMARIZER_SYSTEM_PROMPT
 
@@ -55,6 +56,61 @@ def get_embedding_model(model_name):
         model_name=model_name,
         model_kwargs={'device': 'cpu'}
     )
+
+# Function to get all documents in a vector database
+def get_all_documents_in_vectordb(tenant_id, embed_llm, persist_directory):
+    """Retrieve all document filenames from a vector database for a specific tenant
+    
+    Args:
+        tenant_id (str): The tenant ID
+        embed_llm: The embedding model
+        persist_directory (str): The directory where the vector database is stored
+        
+    Returns:
+        list: A list of unique document filenames in the vector database
+    """
+    # Get tenant-specific directory
+    tenant_vdb_dir = os.path.join(persist_directory, tenant_id)
+    
+    # Check if directory exists
+    if not os.path.exists(tenant_vdb_dir):
+        raise Exception(f"Vector database directory for tenant {tenant_id} does not exist at {tenant_vdb_dir}")
+    
+    # Get collection name for tenant
+    collection_name = get_tenant_collection_name(tenant_id)
+    
+    # Initialize vectorstore
+    vectorstore = Chroma(
+        persist_directory=tenant_vdb_dir,
+        collection_name=collection_name,
+        embedding_function=embed_llm
+    )
+    
+    try:
+        # Get all documents
+        result = vectorstore.get()
+        
+        # Extract unique source filenames from metadata
+        documents = []
+        if 'metadatas' in result and result['metadatas']:
+            for metadata in result['metadatas']:
+                if metadata and 'source' in metadata:
+                    documents.append(metadata['source'])
+        
+        # Clean up
+        vectorstore._client = None
+        del vectorstore
+        
+        # Return unique document filenames
+        return sorted(list(set(documents)))
+    except Exception as e:
+        # Clean up in case of error
+        if 'vectorstore' in locals():
+            vectorstore._client = None
+            del vectorstore
+        
+        # Re-raise the exception
+        raise e
 
 # Summarizer system prompt
 SUMMARIZER_SYSTEM_PROMPT_ORIG = """
@@ -278,6 +334,31 @@ with tab3:
                 
                 # Display retrieved documents
                 st.subheader("Retrieved Documents")
+                
+                # Display all documents in the vector database
+                st.markdown("**All Documents in Vector Database:**")
+                try:
+                    # Get all documents in the vector database
+                    embed_model = get_embedding_model(st.session_state.embedding_model)
+                    all_documents = get_all_documents_in_vectordb(
+                        tenant_id=st.session_state.tenant_id,
+                        embed_llm=embed_model,
+                        persist_directory=st.session_state.vdb_dir
+                    )
+                    
+                    if all_documents:
+                        # Display as a formatted list
+                        st.write(", ".join([os.path.basename(doc) for doc in all_documents]))
+                    else:
+                        st.write("No documents found in the vector database.")
+                except Exception as e:
+                    st.error(f"Error retrieving documents: {str(e)}")
+                
+                # Display the documents returned from the search query
+                #st.markdown("**Documents Retrieved from Query:**")
+                #doc_filenames = [os.path.basename(doc.metadata.get('source', 'Unknown')) for doc in results]
+                #st.write(", ".join(doc_filenames))
+                
                 for i, doc in enumerate(results):
                     with st.expander(f"Document {i+1}: {doc.metadata.get('source', 'Unknown')}"):
                         st.write(f"**Source:** {doc.metadata.get('source', 'Unknown')}")
@@ -287,15 +368,16 @@ with tab3:
                 # Display the formatted context
                 st.subheader("Formatted Context")
                 # Create the formatted context in the same way as in source_summarizer_ollama
-                formatted_context = "\n".join(
-                    f"Content: {doc['content']}\nSource: {doc['metadata']['name']}\nPath: {doc['metadata']['path']}"
-                    for doc in transformed_results
-                )
+                formatted_context = transformed_results
+                #"\n".join(
+                 #   f"Content: {doc['content']}\nSource: {doc['metadata']['name']}\nPath: {doc['metadata']['path']}\n --------------- \n"
+                 #   for doc in transformed_results
+                #)
                 with st.expander("View Formatted Context"):
                     st.text_area("Context used for summarization", formatted_context, height=300, disabled=True)
                 
                 # Summarize the results
-                st.subheader(f"Summary (in {selected_language})")
+                st.subheader(f"Summary (in {selected_language}) from {st.session_state.vdb_dir} using tenant {st.session_state.tenant_id}")
                 with st.spinner(f"Generating summary using {selected_llm} in {selected_language}..."):
                     start_time = time.time()
                     

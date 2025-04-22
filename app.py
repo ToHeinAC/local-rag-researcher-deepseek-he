@@ -48,10 +48,13 @@ def clean_model_name(model_name):
 # Function to extract embedding model name from database directory
 def extract_embedding_model(db_dir_name):
     # Convert from format like 'sentence-transformers--all-mpnet-base-v2--2000--400'
-    # to 'sentence-transformers/all-mpnet-base-v2'
+    # or 'sentence-transformers--paraphrase-multilingual-MiniLM-L12-v2'
+    # to 'sentence-transformers/all-mpnet-base-v2' or 'sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2'
     parts = db_dir_name.split('--')
     if len(parts) >= 2:
-        return parts[0].replace('--', '/') + '/' + parts[1]
+        # The first two parts are the embedding model name
+        model_name = parts[0].replace('--', '/') + '/' + parts[1]
+        return model_name
     return None
 
 # Function to get embedding model

@@ -9,12 +9,12 @@ from langchain_community.document_loaders import DirectoryLoader, CSVLoader, Tex
 
 # Base path for vector database
 VECTOR_DB_PATH = "database"
-DEFAULT_TENANT_ID = "default"
+DEFAULT_TENANT_ID = "default_test"
 
 def get_embedding_model():
     """Get the embedding model."""
     # Import here to avoid circular imports
-    from src.assistant.configuration import get_config_instance
+    from src.assistant.v1_1.configuration_v1_1 import get_config_instance
     
     # Get the embedding model from the global configuration instance
     embedding_model_name = get_config_instance().embedding_model
@@ -29,7 +29,7 @@ def get_embedding_model():
 def get_embedding_model_path():
     """Get the sanitized embedding model name for use in paths."""
     # Import here to avoid circular imports
-    from src.assistant.configuration import get_config_instance
+    from src.assistant.v1_1.configuration_v1_1 import get_config_instance
     
     # Get the embedding model from the global configuration instance
     embedding_model_name = get_config_instance().embedding_model
@@ -140,7 +140,7 @@ def add_documents(documents):
 def search_documents(query, k=3, language="English"):
     """Search for documents in the vector store."""
     # Import clear_cuda_memory here to avoid circular imports
-    from src.assistant.utils import clear_cuda_memory
+    from src.assistant.v1_1.utils_v1_1 import clear_cuda_memory
     from src.assistant.v1_1.rag_helpers_v1_1 import similarity_search_for_tenant
     
     # Clear CUDA memory before embedding

@@ -3,6 +3,7 @@ from typing_extensions import Literal
 from langgraph.constants import Send
 from langgraph.graph import START, END, StateGraph
 from langchain_core.runnables.config import RunnableConfig
+from langchain_core.documents import Document
 from src.assistant.v1_1.configuration_v1_1 import Configuration, get_config_instance
 from src.assistant.v1_1.vector_db_v1_1 import get_or_create_vector_db, search_documents, get_embedding_model_path
 from src.assistant.v1_1.state_v1_1 import ResearcherState
@@ -16,7 +17,7 @@ from src.assistant.v1_1.prompts_v1_1 import (
     # Report writing prompts
     REPORT_WRITER_SYSTEM_PROMPT, REPORT_WRITER_HUMAN_PROMPT,
 )
-from src.assistant.utils_v1_1 import format_documents_with_metadata, invoke_ollama, parse_output, tavily_search, DetectedLanguage, Queries
+from src.assistant.v1_1.utils_v1_1 import format_documents_with_metadata, invoke_ollama, parse_output, tavily_search, DetectedLanguage, Queries
 from src.assistant.v1_1.rag_helpers_v1_1 import source_summarizer_ollama, format_documents_as_plain_text
 import re
 import time
@@ -115,6 +116,7 @@ def generate_research_queries(state: ResearcherState, config: RunnableConfig):
     
     all_queries = result.queries
     all_queries.insert(0, query)
+    print(f"  [DEBUG] Generated research queries: {all_queries}")
     assert isinstance(all_queries, list), "all_queries must be a list"
     
     return {"research_queries": all_queries}
@@ -155,8 +157,8 @@ def retrieve_rag_documents(state: ResearcherState, config: RunnableConfig):
     embedding_model = config.embedding_model
     
     # Get the detected language from the global configuration if available
-    if hasattr(config_obj, 'detected_language'):
-        detected_language = config_obj.detected_language
+    if hasattr(config, 'detected_language'):
+        detected_language = config.detected_language
         print(f"  [Using language from global config: {detected_language}]")
     else:
         print(f"  [Using language from state: {detected_language}]")
@@ -225,6 +227,7 @@ def summarize_query_research(state: ResearcherState, config: RunnableConfig):
     # Get all query documents from the previous step
     all_query_documents = state.get("retrieved_documents", {})
     research_queries = state.get("research_queries", [])
+
     
     # Dictionary to store formatted plain text documents for each query
     all_formatted_documents = {}
@@ -277,20 +280,24 @@ def summarize_query_research(state: ResearcherState, config: RunnableConfig):
             else:
                 summary = f"No relevant documents were found in the database for the query: '{query}'"
             print("  [WARNING] No documents found for this query, using fallback summary")
-        else:
-            # Format documents as plain text with ID, source, and content information
-            plain_text_docs = format_documents_as_plain_text(documents)
             
-            # Store the formatted plain text documents for this query
-            all_formatted_documents[query] = plain_text_docs
+            # Create a document object for the fallback summary and add it to all_summaries
+            summary_doc = Document(page_content=summary, metadata={"position": i, "query": query, "name": "No documents", "path": "No path"})
             
+            # Add to our dictionary of summaries
+            if query not in all_summaries:
+                all_summaries[query] = []
+            all_summaries[query].append(summary_doc)
+            print(f"  [INFO] Added fallback summary for query '{query}' with no documents")
+        else: 
             # Format documents for summarization (using the original method for source_summarizer_ollama)
             context_documents = format_documents_with_metadata(documents, preserve_original=True)
             
             # Format the human prompt for this specific query and documents
             human_prompt = SUMMARIZER_HUMAN_PROMPT.format(
                 query=query,
-                documents=context_documents
+                documents=context_documents,
+                language=detected_language
             )
             
             # Use source_summarizer_ollama to create a summary
@@ -300,30 +307,31 @@ def summarize_query_research(state: ResearcherState, config: RunnableConfig):
                     context_documents=context_documents,
                     language=detected_language,
                     system_message=system_prompt,
-                    human_message=human_prompt,
+                    #human_message=human_prompt,
                     llm_model=summarization_llm
                 )
-                
-                # Extract the content from the result
+                # Extract the summary content from the successful result
                 summary = summary_result["content"]
-                print(f"  [DEBUG] Summary generated successfully")
+                
             except Exception as e:
                 print(f"  [ERROR] Failed to generate summary: {str(e)}")
+                # Set fallback summary text for error cases
                 if detected_language.lower() == 'german':
                     summary = f"Fehler bei der Generierung der Zusammenfassung für Anfrage: '{query}'"
                 else:
                     summary = f"Error generating summary for query: '{query}'"
+                # Create a minimal metadata structure for error cases
+                summary_result = {"metadata": {"name": "error", "path": "error"}}
+            
+            # Create a document object for the summary
+            summary_doc = Document(page_content=summary, metadata={"position": i, "query": query, "name": summary_result["metadata"]["name"], "path": summary_result["metadata"]["path"]})
+            
+            # Add to our dictionary of summaries, with query as key and list of documents as value
+            if query not in all_summaries:
+                all_summaries[query] = []
+            all_summaries[query].append(summary_doc)
+            print(f"  [INFO] Added summary for query '{query}'")
         
-        # Create a document object for the summary
-        from langchain_core.documents import Document
-        summary_doc = Document(page_content=summary, metadata={"position": i, "query": query})
-        
-        # Add to our dictionary of summaries, with query as key and list of documents as value
-        if query not in all_summaries:
-            all_summaries[query] = []
-        all_summaries[query].append(summary_doc)
-        print(f"  [INFO] Added summary for query '{query}'")
-    
     print(f"  [INFO] Generated {len(all_summaries)} summaries for all queries")
 
     assert isinstance(all_summaries, dict), "all_summaries must be a dictionary"

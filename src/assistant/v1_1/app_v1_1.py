@@ -60,10 +60,13 @@ def clean_model_name(model_name):
 # Function to extract embedding model name from database directory
 def extract_embedding_model(db_dir_name):
     # Convert from format like 'sentence-transformers--all-mpnet-base-v2--2000--400'
-    # to 'sentence-transformers/all-mpnet-base-v2'
+    # or 'sentence-transformers--paraphrase-multilingual-MiniLM-L12-v2'
+    # to 'sentence-transformers/all-mpnet-base-v2' or 'sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2'
     parts = db_dir_name.split('--')
     if len(parts) >= 2:
-        return parts[0].replace('--', '/') + '/' + parts[1]
+        # The first two parts are the embedding model name
+        model_name = parts[0].replace('--', '/') + '/' + parts[1]
+        return model_name
     return None
 
 # Function to get embedding model
@@ -230,6 +233,7 @@ def generate_response(user_input, enable_web_search, report_structure, max_searc
                 
                 # Display embedding model information
                 embedding_model_name = extract_embedding_model(selected_database)
+                st.info(f"**Selected Database:** {selected_database}")
                 st.info(f"**Embedding Model:** {embedding_model_name}")
                 
                 # Get embedding model and update the Configuration to use this embedding model
@@ -251,7 +255,7 @@ def generate_response(user_input, enable_web_search, report_structure, max_searc
                     st.error(f"No tenant directories found in {database_path}")
                     retrieval_status.update(state="error", label=f"**Error: No tenant directories found**")
                 else:
-                    tenant_id = tenant_dirs[0]  # Use the first tenant directory
+                    tenant_id = tenant_dirs[-1]  # Use the first tenant directory
                     
                     st.write(f"**Using tenant ID:** {tenant_id}")
                     
@@ -277,7 +281,7 @@ def generate_response(user_input, enable_web_search, report_structure, max_searc
                             k=k_results,
                             language=detected_language  # Pass the detected language
                         )
-                    
+                        
                     # Transform documents
                     transformed_results = transform_documents(results)
                     st.write(f"Retrieved {len(transformed_results)} documents")
@@ -651,6 +655,9 @@ def main():
         index=llm_models.index(st.session_state.summarization_llm) if st.session_state.summarization_llm in llm_models else 0,
         help="Choose the LLM model to use for document summarization; good options: llama3.2 (fast and accurate), qwq (deep but slow)"
     )
+    
+
+
 
     # Add report structure selector to sidebar
     st.sidebar.subheader("Report Structure")
@@ -725,10 +732,14 @@ def main():
             )
             st.session_state.selected_database = selected_db
             
-            # Display embedding model
+            # Extract and update embedding model from database name
             embedding_model_name = extract_embedding_model(selected_db)
             if embedding_model_name:
-                st.sidebar.info(f"🔍 Embedding Model: {embedding_model_name}")
+                # Update the global configuration to use this embedding model
+                from src.assistant.v1_1.configuration_v1_1 import update_embedding_model
+                update_embedding_model(embedding_model_name)
+                st.sidebar.info(f"Selected Database: {selected_db}")
+                st.sidebar.success(f"Updated embedding model to: {embedding_model_name}")
             
             # Number of results to retrieve
             st.session_state.k_results = st.sidebar.slider(

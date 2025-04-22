@@ -40,6 +40,17 @@ class Configuration:
     def update_embedding_model(self, model_name: str) -> None:
         """Update the embedding model at runtime."""
         self.embedding_model = model_name
+        
+    def items(self):
+        """Make the Configuration class compatible with dictionary operations.
+        Returns key-value pairs of all configuration attributes."""
+        return {field.name: getattr(self, field.name) for field in fields(self)}.items()
+        
+    def __getitem__(self, key):
+        """Allow dictionary-like access to configuration attributes."""
+        if hasattr(self, key):
+            return getattr(self, key)
+        raise KeyError(f"Configuration has no attribute {key}")
 
 # Global configuration instance
 _config_instance = None
