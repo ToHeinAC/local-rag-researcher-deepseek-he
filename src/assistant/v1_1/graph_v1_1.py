@@ -485,7 +485,7 @@ def generate_final_answer(state: ResearcherState, config: RunnableConfig):
             content = "\n".join([doc.page_content for doc in docs])
             
             # Add formatted content with query and summary
-            formatted_info.append(f"## Research Query {i+1}: {query}\n\n{content}\n")
+            formatted_info.append(f"## Research Query {i+1}: {query}\n-> Summarizer Answer:{content}\n\n")
         
         # Join all formatted summaries
         information = "\n\n".join(formatted_info)
@@ -526,11 +526,11 @@ def generate_final_answer(state: ResearcherState, config: RunnableConfig):
         
         # Handle any other format as stringified content
         else:
-            information = str(search_summaries)
+            information = str(information)
         
         print(f"  [DEBUG] Using information from {len(search_summaries)} summaries (length: {len(information)})")
         if information:
-            print(f"  [DEBUG] Information preview (first 100 chars): {information[:100]}...")
+            print(f"  [DEBUG] Information preview (first 200 chars): {information[:200]}...")
     
     # Format the human prompt
     human_prompt = REPORT_WRITER_HUMAN_PROMPT.format(
@@ -553,7 +553,7 @@ def generate_final_answer(state: ResearcherState, config: RunnableConfig):
     
     # For LangGraph, we need to return an update to state as a dictionary
     # but ensure the content itself is just the report text
-    print(f"  [INFO] Returning final answer (length: {len(report_content) if isinstance(report_content, str) else 'unknown'})")
+    print(f"  [INFO] Returning final answer to users query <<{state['user_query']}>> (length: {len(report_content) if isinstance(report_content, str) else 'unknown'})")
     
     # Make sure the report content is not None
     if report_content is None:

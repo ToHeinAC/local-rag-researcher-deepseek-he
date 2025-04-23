@@ -169,7 +169,7 @@ Your job is to create a comprehensive deep report STRICTLY in the language {lang
 12. Clearly attribute information to specific sources when multiple sources are used
 """
 
-REPORT_WRITER_HUMAN_PROMPT = """Create a comprehensive and deep report STRICTLY in {language} language based on the following information.
+REPORT_WRITER_HUMAN_PROMPT = """Create an extensive, detailled and deep report with exact levels, figures, numbers, statistics, and quantitative data based on the following information.
 
 User instruction: {instruction}
 
@@ -178,6 +178,8 @@ Report structure to follow:
 
 Information from research (use ONLY this information, do not add any external knowledge, no prefix or suffix, just plain markdown text):
 {information}
+
+YOU MUST STRICTLY respond in {language} language and with proper citations.
 """
 
 

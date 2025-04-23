@@ -225,7 +225,14 @@ def generate_response(user_input, enable_web_search, report_structure, max_searc
                         else:
                             st.warning("No summary available for this query.")
             
-            # Display debugging information in expanders
+            # Display the final answer prominently in markdown format FIRST
+            st.header("📝 Final Research Report")
+            st.markdown(state["final_answer"])
+            
+            # Add a separator between the report and the debug info
+            st.markdown("---")
+            
+            # Display debugging information in expanders AFTER the final report
             st.header("🔬 Research Process Details")
             
             # Display research queries in an expander
@@ -250,14 +257,10 @@ def generate_response(user_input, enable_web_search, report_structure, max_searc
                 else:
                     st.warning("No search summaries were found.")
             
-            # Display the final answer in an expander and in the main area
+            # Display the final answer generation process
             with st.expander("3️⃣ Final Answer Generation"):
                 st.info("Final answer was generated using all available research summaries.")
                 st.code(state["final_answer"][:500] + "..." if len(state["final_answer"]) > 500 else state["final_answer"], language="markdown")
-            
-            # Display the final answer prominently in markdown format
-            st.header("📝 Final Research Report")
-            st.markdown(state["final_answer"])
                 
             # Return the final state for further processing or display
             return {
@@ -898,23 +901,24 @@ def main():
 
         with st.chat_message("assistant"):
             try:
-                # Get the final answer content - since we're now getting plain markdown text directly
-                if isinstance(result, dict) and 'final_answer' in result:
+                # Get the final answer content from the result
+                if isinstance(result, dict) and 'final_answer' in result and result['final_answer']:
                     final_answer = result['final_answer']
+                    # Display final answer with markdown for proper formatting
+                    st.markdown(final_answer, unsafe_allow_html=False)
+                    
+                    # Log that we're displaying the final answer in the chat
+                    print(f"Displaying final answer in assistant chat message (length: {len(final_answer)})")
+                elif isinstance(result, dict) and 'steps' in result and 'final_answer' in result['steps'] and result['steps']['final_answer']:
+                    # Try to get it from the steps structure if available
+                    final_answer = result['steps']['final_answer']
+                    st.markdown(final_answer, unsafe_allow_html=False)
+                    print(f"Displaying final answer from steps in chat message (length: {len(final_answer)})")
                 else:
+                    # If no final answer is available in the expected formats, display the result as is
                     final_answer = str(result)
-                
-                # Display with markdown for proper formatting
-                try:
-                    # Check if final_answer is a dictionary with 'final_answer' key
-                    if isinstance(final_answer, dict) and 'final_answer' in final_answer:
-                        st.markdown(final_answer['final_answer'], unsafe_allow_html=False)
-                    else:
-                        # If it's a string or any other format, display directly
-                        st.markdown(final_answer, unsafe_allow_html=False)
-                except Exception as e:
-                    st.error(f"Error displaying response: {str(e)}")
-                    st.markdown(str(final_answer), unsafe_allow_html=False)
+                    st.markdown(final_answer, unsafe_allow_html=False)
+                    print("Displaying raw result as no final answer was found")
                 
                 # Add an expander to display the debug info (but hide it by default)
                 with st.expander("🔍 Debug Information", expanded=False):
