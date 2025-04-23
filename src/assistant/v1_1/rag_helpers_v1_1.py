@@ -61,25 +61,72 @@ def get_tenant_vectorstore(tenant_id, embed_llm, persist_directory, similarity, 
     )
 
 
-def similarity_search_for_tenant(tenant_id, embed_llm, persist_directory, similarity, normal, query, k=2, language="English"):
-    """Perform similarity search for a tenant."""
-    # Import clear_cuda_memory here to avoid circular imports
+def similarity_search_for_tenant(tenant_id, embed_llm, persist_directory, similarity, normal, query, k=2, language="English", collection_name=None):
+    """Perform similarity search for a tenant.
+    
+    Args:
+        tenant_id: The tenant ID to search for
+        embed_llm: The embedding model to use
+        persist_directory: The directory where the vector database is stored
+        similarity: The similarity metric to use (e.g., 'cosine')
+        normal: Whether to normalize embeddings
+        query: The query string to search for
+        k: The number of results to return
+        language: The language of the query
+        collection_name: Optional specific collection name to use. If None, will generate from tenant_id
+    """
+    # Import necessary modules
     from src.assistant.utils import clear_cuda_memory
+    import logging
+    
+    # Set up logging
+    logging.basicConfig(level=logging.INFO)
+    logger = logging.getLogger(__name__)
+    
+    # Debug information
+    logger.info(f"Starting similarity search with: tenant_id={tenant_id}, collection_name={collection_name}, query={query}")
+
     
     # Clear CUDA memory before search
     clear_cuda_memory()
     
     # Get tenant-specific directory
     tenant_vdb_dir = os.path.join(persist_directory, tenant_id)
+    logger.info(f"Tenant VDB directory: {tenant_vdb_dir}")
     
     # Check if directory exists
     if not os.path.exists(tenant_vdb_dir):
-        raise Exception(f"Vector database directory for tenant {tenant_id} does not exist at {tenant_vdb_dir}")
+        error_msg = f"Vector database directory for tenant {tenant_id} does not exist at {tenant_vdb_dir}"
+        logger.error(error_msg)
+        raise Exception(error_msg)
     
-    # Get collection name for tenant
-    collection_name = get_tenant_collection_name(tenant_id)
+    # Get collection name for tenant if not provided
+    if collection_name is None:
+        collection_name = get_tenant_collection_name(tenant_id)
+    logger.info(f"Using collection name: {collection_name}")
     
     # Initialize vectorstore for search
+    logger.info(f"Initializing Chroma with: dir={tenant_vdb_dir}, collection={collection_name}")
+    
+    try:
+        # Try to use direct Chroma client first to validate collection exists
+        from chromadb import PersistentClient
+        client = PersistentClient(path=tenant_vdb_dir)
+        collections = client.list_collections()
+        logger.info(f"Available collections in {tenant_vdb_dir}: {collections}")
+        
+        if collection_name not in collections:
+            logger.warning(f"Collection '{collection_name}' not found in available collections: {collections}")
+            if collections:  # If there are any collections available
+                logger.info(f"Trying with first available collection: {collections[0]}")
+                collection_name = collections[0]
+            else:
+                logger.error(f"No collections found in {tenant_vdb_dir}")
+                return []  # Return empty results if no collections available
+    except Exception as e:
+        logger.error(f"Error checking collections: {str(e)}")
+    
+    # Now initialize vectorstore with validated collection name
     vectorstore = Chroma(
         persist_directory=tenant_vdb_dir,
         collection_name=collection_name,
@@ -89,10 +136,15 @@ def similarity_search_for_tenant(tenant_id, embed_llm, persist_directory, simila
     
     try:
         # Print language being used for retrieval
-        print(f"Using language for retrieval: {language}")
+        logger.info(f"Using language for retrieval: {language}")
         
         # Perform similarity search
+        logger.info(f"Executing similarity_search with query: '{query}' and k={k}")
         results = vectorstore.similarity_search(query, k=k)
+        logger.info(f"Retrieved {len(results)} documents from search")
+        
+        if not results:
+            logger.warning("No documents found in similarity search.")
         
         # Add language metadata to each document for downstream processing
         for doc in results:

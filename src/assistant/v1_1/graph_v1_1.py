@@ -153,6 +153,7 @@ def retrieve_rag_documents(state: ResearcherState, config: RunnableConfig):
     k_results = config["configurable"].get("k_results", 3)  # Default to 3 if not specified
     
     # Display embedding model information
+    from src.assistant.v1_1.configuration_v1_1 import get_config_instance
     config = get_config_instance()
     embedding_model = config.embedding_model
     
@@ -169,15 +170,75 @@ def retrieve_rag_documents(state: ResearcherState, config: RunnableConfig):
     # Dictionary to store documents for each query
     all_query_documents = {}
     
+    # Import the special database configuration from vector_db_v1_1.py directly
+    import sys
+    from src.assistant.v1_1.vector_db_v1_1 import VECTOR_DB_PATH  # Get the path
+    # Avoid circular imports
+    
+    print(f"  [DEBUG] Vector DB path: {VECTOR_DB_PATH}")
+    print(f"  [DEBUG] System path: {sys.path}")
+    
+    # Force the update of the global configuration for embedding model
+    # This ensures the right database is used for document retrieval
+    try:
+        # We already imported get_config_instance at the top of this file
+        # and have the config instance from earlier in this function
+        print(f"  [DEBUG] Current embedding model in config: {config.embedding_model}")
+        print(f"  [DEBUG] Update language to: {detected_language}")
+        config.detected_language = detected_language
+    except Exception as e:
+        print(f"  [ERROR] Error updating config: {e}")
+    
     # Process each research query
     for i, query in enumerate(research_queries):
         print(f"  [INFO] Processing query {i+1}/{len(research_queries)}: '{query}'")
         
-        # Use the search_documents function with user-specified k and language
-        documents = search_documents(query, k=k_results, language=detected_language)
-        
-        # Ensure documents is at least an empty list if None
-        if documents is None:
+        # Use similarity_search_for_tenant directly (the working method) instead of search_documents
+        try:
+            print(f"  [DEBUG] Calling similarity_search_for_tenant directly with query: '{query}', k={k_results}, language={detected_language}")
+            
+            # Import the necessary functions and constants
+            from src.assistant.v1_1.rag_helpers_v1_1 import similarity_search_for_tenant
+            import os
+            
+            # Use the exact same parameters that work in the UI
+            # Hard-code the known working values
+            database_name = 'sentence-transformers--paraphrase-multilingual-MiniLM-L12-v2--2000--400'
+            tenant_id = '2025-04-22_15-41-10'
+            # Try with the collection_prefix since we see both collections in the logs
+            collection_name = 'collection_2025-04-22_15-41-10'
+            
+            # Get the embedding model
+            from src.assistant.v1_1.vector_db_v1_1 import get_embedding_model
+            embeddings = get_embedding_model()
+            
+            # Construct the database path
+            database_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))), 'database', database_name)
+            print(f"  [DEBUG] Using database path: {database_path}")
+            print(f"  [DEBUG] Using tenant ID: {tenant_id}")
+            print(f"  [DEBUG] Using collection name: {collection_name}")
+            
+            # Call similarity_search_for_tenant directly with the known working parameters
+            documents = similarity_search_for_tenant(
+                tenant_id=tenant_id,
+                embed_llm=embeddings,
+                persist_directory=database_path,
+                similarity="cosine",
+                normal=True,
+                query=query,
+                k=k_results,
+                language=detected_language,
+                collection_name=collection_name  # Explicitly pass the collection name
+            )
+            
+            # Ensure documents is at least an empty list if None
+            if documents is None:
+                documents = []
+                print("  [WARNING] similarity_search_for_tenant returned None")
+        except Exception as e:
+            print(f"  [ERROR] Exception during similarity_search_for_tenant: {str(e)}")
+            import traceback
+            print(f"  [ERROR] Traceback: {traceback.format_exc()}")
             documents = []
             
         # Add detailed debugging
@@ -375,7 +436,6 @@ def generate_final_answer(state: ResearcherState, config: RunnableConfig):
     # Format the system prompt
     system_prompt = REPORT_WRITER_SYSTEM_PROMPT.format(
         language=detected_language,
-        date=datetime.datetime.now().strftime("%Y-%m-%d")
     )
     
     # Get the report structure from config or use default
@@ -387,8 +447,14 @@ def generate_final_answer(state: ResearcherState, config: RunnableConfig):
     """)
     
     # Get the search summaries from the state
-    search_summaries = state.get("search_summaries", [])
+    search_summaries = state.get("search_summaries", {})
     print(f"  [DEBUG] Search summaries found: {len(search_summaries) if search_summaries else 0}")
+    
+    # Debug information about summaries
+    if search_summaries:
+        print(f"  [DEBUG] Search summaries keys: {list(search_summaries.keys())}")
+        total_documents = sum(len(docs) for docs in search_summaries.values())
+        print(f"  [DEBUG] Total documents across all summaries: {total_documents}")
     
     # Process and format the accumulated summaries
     if not search_summaries:

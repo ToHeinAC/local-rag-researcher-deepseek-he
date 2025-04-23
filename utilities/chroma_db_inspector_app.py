@@ -29,7 +29,7 @@ from src.assistant.v1_1.vector_db_v1_1 import get_embedding_model_path
 DEFAULT_TENANT_ID = 'default_test'
 
 # Title and description
-st.title("Chroma Database Inspector")
+st.title("Chroma Database Inspector 🔍")
 st.markdown("This app allows you to inspect the contents of your Chroma vector database.")
 
 # Define functions

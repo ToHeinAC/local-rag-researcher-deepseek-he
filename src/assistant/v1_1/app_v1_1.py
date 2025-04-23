@@ -45,7 +45,18 @@ load_dotenv()
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../../'))
 DEFAULT_DATA_FOLDER = os.path.join(os.path.dirname(__file__), "data")
 DATABASE_PATH = os.path.join(PROJECT_ROOT, "database")
-DEFAULT_TENANT_ID = '2025-04-22_15-41-10' 
+
+# Define default tenant and collection settings
+DEFAULT_TENANT_ID = '2025-04-22_15-41-10'
+DEFAULT_COLLECTION_PREFIX = 'collection_'
+
+# Special database configuration for automatic tenant/collection selection
+SPECIAL_DB_CONFIG = {
+    'sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2--2000--400': {
+        'tenant_id': '2025-04-22_15-41-10',
+        'collection_name': '2025-04-22_15-41-10'  # Using the actual collection name without prefix
+    }
+}
 
 # Set page config
 st.set_page_config(
@@ -214,6 +225,40 @@ def generate_response(user_input, enable_web_search, report_structure, max_searc
                         else:
                             st.warning("No summary available for this query.")
             
+            # Display debugging information in expanders
+            st.header("🔬 Research Process Details")
+            
+            # Display research queries in an expander
+            with st.expander("1️⃣ Generated Research Queries"):
+                research_queries = state.get("research_queries", [])
+                if research_queries:
+                    for i, query in enumerate(research_queries):
+                        st.markdown(f"**Query {i+1}:** {query}")
+                else:
+                    st.warning("No research queries were generated.")
+            
+            # Display search summaries in an expander
+            with st.expander("2️⃣ Search Summaries"):
+                search_summaries = state.get("search_summaries", {})
+                if search_summaries and len(search_summaries) > 0:
+                    for query, summaries in search_summaries.items():
+                        st.markdown(f"#### For Query: '{query}'")
+                        for i, summary in enumerate(summaries):
+                            st.markdown(f"**Summary {i+1}:**")
+                            st.write(summary.page_content)
+                            st.markdown("---")
+                else:
+                    st.warning("No search summaries were found.")
+            
+            # Display the final answer in an expander and in the main area
+            with st.expander("3️⃣ Final Answer Generation"):
+                st.info("Final answer was generated using all available research summaries.")
+                st.code(state["final_answer"][:500] + "..." if len(state["final_answer"]) > 500 else state["final_answer"], language="markdown")
+            
+            # Display the final answer prominently in markdown format
+            st.header("📝 Final Research Report")
+            st.markdown(state["final_answer"])
+                
             # Return the final state for further processing or display
             return {
                 "steps": state,
@@ -248,18 +293,29 @@ def generate_response(user_input, enable_web_search, report_structure, max_searc
                     # Print confirmation of embedding model update
                     st.write(f"✅ Updated embedding model to: {embedding_model_name}")
                 
-                # Get tenant ID from the database directory
+                # Get tenant ID from the database directory or use special configuration
                 database_path = os.path.join(DATABASE_PATH, selected_database)
-                tenant_dirs = [d for d in os.listdir(database_path) if os.path.isdir(os.path.join(database_path, d))]
                 
-                if not tenant_dirs:
-                    st.error(f"No tenant directories found in {database_path}")
-                    retrieval_status.update(state="error", label=f"**Error: No tenant directories found**")
+                # Check if this database has a special configuration
+                if selected_database in SPECIAL_DB_CONFIG:
+                    # Use the special configuration
+                    tenant_id = SPECIAL_DB_CONFIG[selected_database]['tenant_id']
+                    collection_name = SPECIAL_DB_CONFIG[selected_database]['collection_name']
+                    st.write(f"**Using preconfigured tenant ID:** {tenant_id}")
+                    st.write(f"**Using preconfigured collection:** {collection_name}")
                 else:
-                    st.write(f"**Tenant directories found:** {tenant_dirs}")
-                    #tenant_id = tenant_dirs[-1]  # Use the first tenant directory
-                    tenant_id = DEFAULT_TENANT_ID
-                    st.write(f"**Using tenant ID:** {tenant_id}")
+                    # Use the standard approach of finding tenant directories
+                    tenant_dirs = [d for d in os.listdir(database_path) if os.path.isdir(os.path.join(database_path, d))]
+                    
+                    if not tenant_dirs:
+                        st.error(f"No tenant directories found in {database_path}")
+                        retrieval_status.update(state="error", label=f"**Error: No tenant directories found**")
+                        return None
+                    else:
+                        st.write(f"**Tenant directories found:** {tenant_dirs}")
+                        tenant_id = DEFAULT_TENANT_ID
+                        collection_name = f"{DEFAULT_COLLECTION_PREFIX}{tenant_id}"
+                        st.write(f"**Using tenant ID:** {tenant_id}")
                     
                     # Perform similarity search
                     st.write("### Retrieving Documents")
@@ -273,16 +329,32 @@ def generate_response(user_input, enable_web_search, report_structure, max_searc
                         st.write(f"ℹ️ Detected language: **{detected_language}**")
                         
                         # Pass the detected language to the similarity search
-                        results = similarity_search_for_tenant(
-                            tenant_id=tenant_id,
-                            embed_llm=embed_model,
-                            persist_directory=database_path,
-                            similarity="cosine",
-                            normal=True,
-                            query=user_input,
-                            k=k_results,
-                            language=detected_language  # Pass the detected language
-                        )
+                        # If we have a specific collection name from special config, use it
+                        if selected_database in SPECIAL_DB_CONFIG and 'collection_name' in SPECIAL_DB_CONFIG[selected_database]:
+                            # Use the specific collection name from the configuration
+                            results = similarity_search_for_tenant(
+                                tenant_id=tenant_id,
+                                embed_llm=embed_model,
+                                persist_directory=database_path,
+                                similarity="cosine",
+                                normal=True,
+                                query=user_input,
+                                k=k_results,
+                                language=detected_language,  # Pass the detected language
+                                collection_name=SPECIAL_DB_CONFIG[selected_database]['collection_name']  # Use the specific collection
+                            )
+                        else:
+                            # Use the default approach (tenant_id-based collection)
+                            results = similarity_search_for_tenant(
+                                tenant_id=tenant_id,
+                                embed_llm=embed_model,
+                                persist_directory=database_path,
+                                similarity="cosine",
+                                normal=True,
+                                query=user_input,
+                                k=k_results,
+                                language=detected_language  # Pass the detected language
+                            )
                         
                     # Transform documents
                     transformed_results = transform_documents(results)

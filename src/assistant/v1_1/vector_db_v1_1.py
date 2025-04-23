@@ -9,7 +9,15 @@ from langchain_community.document_loaders import DirectoryLoader, CSVLoader, Tex
 
 # Base path for vector database
 VECTOR_DB_PATH = "database"
-DEFAULT_TENANT_ID = "default_test"
+DEFAULT_TENANT_ID = "2025-04-22_15-41-10"  # Updated to match the correct tenant ID
+
+# Define the special database configuration
+SPECIAL_DB_CONFIG = {
+    'sentence-transformers--paraphrase-multilingual-MiniLM-L12-v2--2000--400': {
+        'tenant_id': '2025-04-22_15-41-10',
+        'collection_name': 'collection_2025-04-22_15-41-10'  # Using collection name WITH prefix
+    }
+}
 
 def get_embedding_model():
     """Get the embedding model."""
@@ -142,17 +150,60 @@ def search_documents(query, k=3, language="English"):
     # Import clear_cuda_memory here to avoid circular imports
     from src.assistant.v1_1.utils_v1_1 import clear_cuda_memory
     from src.assistant.v1_1.rag_helpers_v1_1 import similarity_search_for_tenant
+    import logging
+    
+    # Set up logging
+    logging.basicConfig(level=logging.INFO)
+    logger = logging.getLogger(__name__)
     
     # Clear CUDA memory before embedding
     clear_cuda_memory()
     
+    # Get the configured embedding model
     embeddings = get_embedding_model()
-    tenant_id = DEFAULT_TENANT_ID
-    vector_db_path = get_vector_db_path()
+    
+    # Get the embedding model path (for accessing the DB)
+    from src.assistant.v1_1.configuration_v1_1 import get_config_instance
+    current_embedding_model = get_config_instance().embedding_model
+    sanitized_model_name = current_embedding_model.replace('/', '--')
+    
+    # Use the module-level DATABASE_PATH constant instead
+    import os
+    # Use the global DATABASE_PATH but resolve it to an absolute path
+    DATABASE_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../../database'))
+    
+    
+    # Always use the special configuration for sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2 model
+    # Since we know this is the model we need to use for German retrieval
+    if 'paraphrase-multilingual-MiniLM-L12-v2' in current_embedding_model:
+        # This is the model we need - always use the specific database configuration
+        special_db_key = 'sentence-transformers--paraphrase-multilingual-MiniLM-L12-v2--2000--400'
+        logger.info(f"Detected multilingual model - using special database: {special_db_key}")
+    else:
+        # For other models, try to match the DB key
+        special_db_key = None
+        for key in SPECIAL_DB_CONFIG.keys():
+            if sanitized_model_name in key or key in sanitized_model_name:
+                special_db_key = key
+                break
+    
+    if special_db_key:
+        # Use the special configuration
+        logger.info(f"Using special database configuration for: {special_db_key}")
+        tenant_id = SPECIAL_DB_CONFIG[special_db_key]['tenant_id']
+        collection_name = SPECIAL_DB_CONFIG[special_db_key]['collection_name']
+        vector_db_path = os.path.join(DATABASE_PATH, special_db_key)
+        logger.info(f"Using special DB path: {vector_db_path}, tenant: {tenant_id}, collection: {collection_name}")
+    else:
+        # Use default configuration
+        tenant_id = DEFAULT_TENANT_ID
+        collection_name = None  # Will be generated from tenant_id
+        vector_db_path = get_vector_db_path()
+        logger.info(f"Using default DB path: {vector_db_path}, tenant: {tenant_id}")
     
     try:
         # Use similarity_search_for_tenant to search for documents
-        print(f"Searching documents with language: {language}")
+        logger.info(f"Searching documents with language: {language}")
         documents = similarity_search_for_tenant(
             tenant_id=tenant_id,
             embed_llm=embeddings,
@@ -161,7 +212,8 @@ def search_documents(query, k=3, language="English"):
             normal=True,
             query=query,
             k=k,
-            language=language  # Pass the language parameter
+            language=language,  # Pass the language parameter
+            collection_name=collection_name  # Pass the collection name if we have one
         )
         
         # Clear CUDA memory after embedding
