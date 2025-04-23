@@ -45,6 +45,7 @@ load_dotenv()
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../../'))
 DEFAULT_DATA_FOLDER = os.path.join(os.path.dirname(__file__), "data")
 DATABASE_PATH = os.path.join(PROJECT_ROOT, "database")
+DEFAULT_TENANT_ID = '2025-04-22_15-41-10' 
 
 # Set page config
 st.set_page_config(
@@ -255,8 +256,9 @@ def generate_response(user_input, enable_web_search, report_structure, max_searc
                     st.error(f"No tenant directories found in {database_path}")
                     retrieval_status.update(state="error", label=f"**Error: No tenant directories found**")
                 else:
-                    tenant_id = tenant_dirs[-1]  # Use the first tenant directory
-                    
+                    st.write(f"**Tenant directories found:** {tenant_dirs}")
+                    #tenant_id = tenant_dirs[-1]  # Use the first tenant directory
+                    tenant_id = DEFAULT_TENANT_ID
                     st.write(f"**Using tenant ID:** {tenant_id}")
                     
                     # Perform similarity search
