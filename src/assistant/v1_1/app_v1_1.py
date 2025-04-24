@@ -615,9 +615,38 @@ def generate_response(user_input, enable_web_search, report_structure, max_searc
                                 st.error(f"Error generating workflow visualization: {str(e)}")
                 
                 # Return the final state when streaming completes
+                # Get the final answer directly from current_state
+                final_answer = current_state.get("final_answer", "")
+                
+                # Print more detailed debug info
+                print(f"DEBUG - Final answer from current_state: Type={type(final_answer).__name__}, Length={len(str(final_answer))} chars")
+                if isinstance(final_answer, str) and final_answer:
+                    print(f"DEBUG - Preview: {final_answer[:100]}...")
+                else:
+                    print(f"DEBUG - current_state keys: {current_state.keys()}")
+                    
+                    # Try to extract the final answer from a different location if it exists
+                    if 'generate_final_answer' in current_state:
+                        print(f"DEBUG - Found generate_final_answer node result: {type(current_state['generate_final_answer']).__name__}")
+                        if isinstance(current_state['generate_final_answer'], dict) and 'final_answer' in current_state['generate_final_answer']:
+                            final_answer = current_state['generate_final_answer']['final_answer']
+                            print(f"DEBUG - Extracted from node result: {type(final_answer).__name__}, Length={len(str(final_answer))} chars")
+                
+                # Ensure final_answer is a non-empty string
+                if not final_answer or not isinstance(final_answer, str):
+                    print("DEBUG - Using researcherState['final_answer'] directly")
+                    # Try direct access without get() as a last resort
+                    try:
+                        if 'final_answer' in current_state:
+                            final_answer = current_state['final_answer']
+                            print(f"DEBUG - Direct access result: {type(final_answer).__name__}, Length={len(str(final_answer))} chars")
+                    except Exception as e:
+                        print(f"DEBUG - Error accessing final_answer: {str(e)}")
+                
+                # Construct result with explicit final_answer
                 result = {
                     "steps": current_state,
-                    "final_answer": current_state.get("final_answer", "No final answer generated")
+                    "final_answer": final_answer
                 }
                 
                 # Update elapsed time one final time
@@ -897,28 +926,80 @@ def main():
         )
 
         # Store assistant message - only store the final answer part for the chat history
-        st.session_state.messages.append({"role": "assistant", "content": result["final_answer"] if isinstance(result, dict) and "final_answer" in result else result})
+        if isinstance(result, dict) and "final_answer" in result and result["final_answer"]:
+            # Get the final answer content as a string
+            final_answer_content = result["final_answer"]
+            print(f"Found final_answer in result: Length={len(final_answer_content)} chars")
+        else:
+            # Fallback if no final_answer is present
+            final_answer_content = str(result)
+            print(f"WARNING: Using fallback content. Keys: {result.keys() if isinstance(result, dict) else 'Not a dict'}")
+            
+        # Add to chat history
+        st.session_state.messages.append({"role": "assistant", "content": final_answer_content})
+        print(f"Added to chat history: {type(final_answer_content).__name__} with length {len(str(final_answer_content))}")
 
         with st.chat_message("assistant"):
             try:
-                # Get the final answer content from the result
+                # DETAILED DEBUGGING
+                print("=== CHAT MESSAGE DEBUG INFO ===")
+                if isinstance(result, dict):
+                    print(f"Result dict keys: {result.keys()}")
+                    if 'final_answer' in result:
+                        print(f"final_answer type: {type(result['final_answer']).__name__}, length: {len(str(result['final_answer']))}")
+                        if result['final_answer']:
+                            print(f"Preview: {str(result['final_answer'])[:100]}...")
+                        else:
+                            print("final_answer exists but is empty")
+                        
+                        # Try to access steps
+                        if 'steps' in result and isinstance(result['steps'], dict):
+                            print(f"Steps keys: {result['steps'].keys()}")
+                            
+                            # Check if final_answer exists in the steps
+                            if 'final_answer' in result['steps']:
+                                print(f"final_answer in steps type: {type(result['steps']['final_answer']).__name__}, length: {len(str(result['steps']['final_answer']))}")
+                                
+                            # Check if generate_final_answer node result exists
+                            if 'generate_final_answer' in result['steps']:
+                                print("Found generate_final_answer in steps")
+                                if isinstance(result['steps']['generate_final_answer'], dict) and 'final_answer' in result['steps']['generate_final_answer']:
+                                    print(f"Node result final_answer length: {len(str(result['steps']['generate_final_answer']['final_answer']))}")
+                
+                # MAIN DISPLAY LOGIC - Try multiple sources for final_answer
+                final_answer = None
+                
+                # Try direct access to result['final_answer']
                 if isinstance(result, dict) and 'final_answer' in result and result['final_answer']:
                     final_answer = result['final_answer']
-                    # Display final answer with markdown for proper formatting
-                    st.markdown(final_answer, unsafe_allow_html=False)
-                    
-                    # Log that we're displaying the final answer in the chat
-                    print(f"Displaying final answer in assistant chat message (length: {len(final_answer)})")
-                elif isinstance(result, dict) and 'steps' in result and 'final_answer' in result['steps'] and result['steps']['final_answer']:
-                    # Try to get it from the steps structure if available
+                    print("Using result['final_answer']")
+                
+                # If empty, try steps.final_answer
+                if (not final_answer or len(str(final_answer)) == 0) and isinstance(result, dict) and 'steps' in result and isinstance(result['steps'], dict) and 'final_answer' in result['steps'] and result['steps']['final_answer']:
                     final_answer = result['steps']['final_answer']
+                    print("Using result['steps']['final_answer']")
+                    
+                # If still empty, try node result
+                if (not final_answer or len(str(final_answer)) == 0) and isinstance(result, dict) and 'steps' in result and isinstance(result['steps'], dict) and 'generate_final_answer' in result['steps']:
+                    node_result = result['steps']['generate_final_answer']
+                    if isinstance(node_result, dict) and 'final_answer' in node_result and node_result['final_answer']:
+                        final_answer = node_result['final_answer']
+                        print("Using node result final_answer")
+                    
+                # Display the final answer if we have it
+                if final_answer and len(str(final_answer)) > 0:
+                    # Make sure it's a string
+                    if not isinstance(final_answer, str):
+                        final_answer = str(final_answer)
+                        
+                    print(f"DISPLAYING FINAL ANSWER: Length={len(final_answer)}")
                     st.markdown(final_answer, unsafe_allow_html=False)
-                    print(f"Displaying final answer from steps in chat message (length: {len(final_answer)})")
                 else:
-                    # If no final answer is available in the expected formats, display the result as is
-                    final_answer = str(result)
-                    st.markdown(final_answer, unsafe_allow_html=False)
-                    print("Displaying raw result as no final answer was found")
+                    # Last resort fallback
+                    print("WARNING: Could not find valid final_answer content anywhere")
+                    fallback_content = "No final answer was generated. Please try again or reformulate your query."
+                    st.markdown(fallback_content, unsafe_allow_html=False)
+
                 
                 # Add an expander to display the debug info (but hide it by default)
                 with st.expander("🔍 Debug Information", expanded=False):

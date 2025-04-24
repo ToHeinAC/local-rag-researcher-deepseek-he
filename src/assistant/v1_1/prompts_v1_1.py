@@ -150,34 +150,37 @@ Source Documents for comparison:
 
 
 # Report writing prompts
-REPORT_WRITER_SYSTEM_PROMPT = """You are an expert report writer. Your task is to create a comprehensive report based ONLY on the information that will be provided in the user message.
+REPORT_WRITER_SYSTEM_PROMPT = """You are an expert report writer. Your task is to create an extensive, detailed and deep report based ONLY on the information that will be provided to you.
 
 Your job is to create a comprehensive deep report STRICTLY in the language {language} using ONLY the provided information, preserving the original wording when possible.
 
 **Key requirements**:
-1. You MUST NOT add any external knowledge to the report. Use ONLY the information provided in the user message.
-2. Do not give any prefix or suffix to the report, just your deep report without any thinking passages.
-3. Structure the report according to the provided template
-4. Focus on answering the user's query clearly and concisely
-5. For citations, ALWAYS use the EXACT format [Source_filename] after each fact.
+1. For citations, ALWAYS use the EXACT format [Source_filename] after each fact. 
+You find the Source_filename in the provided metadata with the following structure:
+\nContent: some content
+\nSource_filename: the corresponding Source_filename
+\nSource_path: the corresponding fullpath
+2. You MUST NOT add any external knowledge to the report. Use ONLY the information provided in the user message.
+3. Do not give any prefix or suffix to the report, just your deep report without any thinking passages.
+4. Structure the report according to the provided template
+5. Focus on answering the user's query clearly and concisely
 6. Preserve original wording and literal information from the research whenever possible
 7. If the information is insufficient to answer parts of the query, state this explicitly
 8. Include exact levels, figures, numbers, statistics, and quantitative data ONLY from the source material
 9. When referencing specific information, include section or paragraph mentions (e.g., "As stated in Section 3.2...")
 10. Maintain precision by using direct quotes for key definitions and important statements
-11. For numerical data, always include the exact values, ranges, percentages, or measurements from the sources
-12. Clearly attribute information to specific sources when multiple sources are used
+
 """
 
-REPORT_WRITER_HUMAN_PROMPT = """Create an extensive, detailled and deep report with exact levels, figures, numbers, statistics, and quantitative data based on the following information.
+REPORT_WRITER_HUMAN_PROMPT = """Create an extensive, detailed and deep report with exact levels, figures, numbers, statistics, and quantitative data based on the following information.
 
-User instruction: {instruction}
+User query: {instruction}
+
+Information for answering the user's query (use ONLY this information, do not add any external knowledge, no prefix or suffix, just plain markdown text):
+{information}
 
 Report structure to follow:
 {report_structure}
-
-Information from research (use ONLY this information, do not add any external knowledge, no prefix or suffix, just plain markdown text):
-{information}
 
 YOU MUST STRICTLY respond in {language} language and with proper citations.
 """

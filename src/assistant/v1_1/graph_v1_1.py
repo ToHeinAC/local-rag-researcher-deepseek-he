@@ -342,8 +342,12 @@ def summarize_query_research(state: ResearcherState, config: RunnableConfig):
                 summary = f"No relevant documents were found in the database for the query: '{query}'"
             print("  [WARNING] No documents found for this query, using fallback summary")
             
+            # Format the fallback summary to include Content, Source_filename, and Source_path
+            formatted_summary = f"Content: {summary}\nSource_filename: []\nSource_path: []"
+            
             # Create a document object for the fallback summary and add it to all_summaries
-            summary_doc = Document(page_content=summary, metadata={"position": i, "query": query, "name": "No documents", "path": "No path"})
+            # Use empty lists for name and path to maintain consistent data structure
+            summary_doc = Document(page_content=formatted_summary, metadata={"position": i, "query": query, "name": [], "path": []})
             
             # Add to our dictionary of summaries
             if query not in all_summaries:
@@ -384,8 +388,36 @@ def summarize_query_research(state: ResearcherState, config: RunnableConfig):
                 # Create a minimal metadata structure for error cases
                 summary_result = {"metadata": {"name": "error", "path": "error"}}
             
-            # Create a document object for the summary
-            summary_doc = Document(page_content=summary, metadata={"position": i, "query": query, "name": summary_result["metadata"]["name"], "path": summary_result["metadata"]["path"]})
+            # Extract source document names and paths from the original documents
+            source_names = [doc.metadata.get('source', '') for doc in documents if hasattr(doc, 'metadata')]
+            source_paths = [doc.metadata.get('path', '') for doc in documents if hasattr(doc, 'metadata')]
+            
+            # Filter out empty values
+            source_names = [name for name in source_names if name]
+            source_paths = [path for path in source_paths if path]
+            
+            # Format the summary to include Content, Source_filename, and Source_path
+            formatted_summary = f"Content: {summary}"
+            
+            # Add source filenames if available
+            if source_names:
+                formatted_summary += f"\nSource_filename: {', '.join(source_names)}"
+            else:
+                formatted_summary += f"\nSource_filename: {summary_result['metadata'].get('name', [])}"
+                
+            # Add source paths if available
+            if source_paths:
+                formatted_summary += f"\nSource_path: {', '.join(source_paths)}"
+            else:
+                formatted_summary += f"\nSource_path: {summary_result['metadata'].get('path', [])}"
+            
+            # Create the summary document with the extracted metadata and formatted content
+            summary_doc = Document(page_content=formatted_summary, metadata={
+                "position": i, 
+                "query": query, 
+                "name": source_names if source_names else summary_result["metadata"].get("name", []),
+                "path": source_paths if source_paths else summary_result["metadata"].get("path", [])
+            })
             
             # Add to our dictionary of summaries, with query as key and list of documents as value
             if query not in all_summaries:
@@ -553,7 +585,7 @@ def generate_final_answer(state: ResearcherState, config: RunnableConfig):
     
     # For LangGraph, we need to return an update to state as a dictionary
     # but ensure the content itself is just the report text
-    print(f"  [INFO] Returning final answer to users query <<{state['user_query']}>> (length: {len(report_content) if isinstance(report_content, str) else 'unknown'})")
+    print(f"  [INFO] Returning final answer to users query <<{state['user_query']}>> (length: {len(report_content)}): {report_content[:100]}..." if isinstance(report_content, str) else 'unknown')
     
     # Make sure the report content is not None
     if report_content is None:
@@ -587,7 +619,7 @@ def generate_final_answer(state: ResearcherState, config: RunnableConfig):
         # Ensure text is properly stripped of whitespace
         report_content = report_content.strip()
         
-        print(f"  [INFO] Ensured report content is clean markdown for display")
+        print(f"  [INFO] Ensured report content is clean markdown for display: {report_content[:100]}...")
     
     # Set the final_answer in the state and return it with the node name
     # This ensures both the state is updated and the UI can access it
