@@ -7,8 +7,18 @@ import os
 import re
 import sys
 import time
+import tempfile
 from datetime import datetime, timedelta
 from pathlib import Path
+
+# Import visualization libraries (with fallback if not available)
+try:
+    import networkx as nx
+    import matplotlib.pyplot as plt
+    from matplotlib.patches import FancyBboxPatch
+    NETWORKX_AVAILABLE = True
+except ImportError:
+    NETWORKX_AVAILABLE = False
 
 # Add project root to Python path to fix import issues
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../../../')))
@@ -88,12 +98,14 @@ def get_embedding_model(model_name):
         model_kwargs={'device': 'cpu'}
     )
 
-def generate_workflow_visualization():
-    # Create a custom Mermaid diagram for the simplified workflow
-    # The simplified workflow: display_embedding_model_info -> detect_language -> generate_research_queries -> 
-    # retrieve_rag_documents -> summarize_query_research -> generate_final_answer
+def create_mermaid_representation():
+    """
+    Create a Mermaid diagram representation of the workflow.
     
-    mermaid_representation = """
+    Returns:
+        str: Mermaid diagram representation
+    """
+    return """
     graph TD
         START([START]) --> display_embedding_model_info["Display Embedding Model Info"]
         display_embedding_model_info --> detect_language["Detect Language"]
@@ -108,9 +120,262 @@ def generate_workflow_visualization():
         classDef terminal fill:#e9e9e9,stroke:#333,stroke-width:1px;
         class START,END terminal;
     """
+
+def generate_workflow_visualization(return_mermaid_only=False):
+    """
+    Generate a visualization of the LangGraph workflow using NetworkX
     
-    # Return the mermaid representation for streamlit mermaid display
-    return mermaid_representation
+    Args:
+        return_mermaid_only (bool): If True, only return the Mermaid representation
+        
+    Returns:
+        str: Path to the visualization image or Mermaid representation
+    """
+    # If requested to return only Mermaid, skip NetworkX completely
+    if return_mermaid_only:
+        return create_mermaid_representation()
+        
+    try:
+        # Check if NetworkX is available (should be, based on the imports at the top)
+        if not NETWORKX_AVAILABLE:
+            raise ImportError("NetworkX or matplotlib not available")
+        
+        # Create a directed graph
+        G = nx.DiGraph()
+        
+        # Define the workflow nodes
+        workflow_nodes = [
+            "START",
+            "display_embedding_model_info",
+            "detect_language",
+            "generate_research_queries",
+            "retrieve_rag_documents",
+            "summarize_query_research",
+            "generate_final_answer",
+            "END"
+        ]
+        
+        # Add nodes to the graph
+        for node in workflow_nodes:
+            G.add_node(node)
+        
+        # Define workflow edges
+        workflow_edges = [
+            ("START", "display_embedding_model_info"),
+            ("display_embedding_model_info", "detect_language"),
+            ("detect_language", "generate_research_queries"),
+            ("generate_research_queries", "retrieve_rag_documents"),
+            ("retrieve_rag_documents", "summarize_query_research"),
+            ("summarize_query_research", "generate_final_answer"),
+            ("generate_final_answer", "END")
+        ]
+        
+        # Add edges to the graph
+        G.add_edges_from(workflow_edges)
+        
+        # Create a figure
+        plt.figure(figsize=(10, 6))
+        
+        # Use a simple layout algorithm that doesn't require pygraphviz
+        # First try spring_layout with fixed positions for START and END
+        
+        # Define node colors
+        node_colors = {
+            'START': 'lightgray',
+            'END': 'lightgray',
+            'display_embedding_model_info': 'lightblue',
+            'detect_language': 'lightblue',
+            'generate_research_queries': 'lightblue',
+            'retrieve_rag_documents': 'lightgreen',
+            'summarize_query_research': 'lightgreen',
+            'generate_final_answer': 'lightblue'
+        }
+        
+        # Draw nodes with different colors
+        for node in G.nodes():
+            nx.draw_networkx_nodes(
+                G, pos, 
+                nodelist=[node], 
+                node_color=node_colors.get(node, 'lightblue'),
+                node_size=2500,
+                alpha=0.8
+            )
+        
+        # Draw edges
+        nx.draw_networkx_edges(
+            G, pos, 
+            arrows=True, 
+            arrowsize=20, 
+            edge_color='gray',
+            width=2.0
+        )
+        
+        # Draw node labels with more readable names
+        node_labels = {
+            'START': 'START',
+            'display_embedding_model_info': 'Display Embedding\nModel Info',
+            'detect_language': 'Detect Language',
+            'generate_research_queries': 'Generate Research\nQueries',
+            'retrieve_rag_documents': 'Retrieve RAG\nDocuments',
+            'summarize_query_research': 'Summarize Query\nResearch',
+            'generate_final_answer': 'Generate Final\nAnswer',
+            'END': 'END'
+        }
+        nx.draw_networkx_labels(G, pos, labels=node_labels, font_size=10, font_weight='bold')
+        
+        # Add embedding model info
+        from src.assistant.v1_1.configuration_v1_1 import get_config_instance
+        config = get_config_instance()
+        embedding_model = config.embedding_model
+        plt.figtext(0.5, 0.98, f"Embedding Model: {embedding_model}", ha="center", fontsize=12, 
+                   bbox={"facecolor":"lightgray", "alpha":0.5, "pad":5})
+        
+        # Add LLM model info
+        summarization_llm = st.session_state.get('summarization_llm', 'llama3.2')
+        report_llm = st.session_state.get('report_llm', 'qwq')
+        plt.figtext(0.5, 0.03, f"Summarization LLM: {summarization_llm} | Report LLM: {report_llm}", 
+                   ha="center", fontsize=10, bbox={"facecolor":"lightgray", "alpha":0.5, "pad":5})
+        
+        # Remove axis
+        plt.axis('off')
+        
+        # Save the figure to a fixed filename (like in app.py)
+        workflow_img_path = "langgraph_workflow.png"  # Use relative path like in app.py
+        plt.tight_layout()
+        plt.savefig(workflow_img_path, dpi=100, bbox_inches='tight')
+        plt.close()
+        
+        return workflow_img_path
+    
+    except Exception as e:
+        # If visualization fails, return the error
+        print(f"Error generating visualization: {str(e)}.")
+        return None
+
+def generate_langgraph_visualization():
+    """
+    Generate a visualization of the LangGraph workflow.
+    """
+    try:
+        import networkx as nx
+        import matplotlib.pyplot as plt
+        
+        # Create a directed graph
+        G = nx.DiGraph()
+        
+        # Add nodes
+        nodes = [
+            'START',
+            'display_embedding_model_info',
+            'detect_language',
+            'generate_research_queries',
+            'retrieve_rag_documents',
+            'summarize_query_research',
+            'generate_final_answer',
+            'END'
+        ]
+        G.add_nodes_from(nodes)
+        
+        # Add edges (connections between nodes)
+        edges = [
+            ('START', 'display_embedding_model_info'),
+            ('display_embedding_model_info', 'detect_language'),
+            ('detect_language', 'generate_research_queries'),
+            ('generate_research_queries', 'retrieve_rag_documents'),
+            ('retrieve_rag_documents', 'summarize_query_research'),
+            ('summarize_query_research', 'generate_final_answer'),
+            ('generate_final_answer', 'END')
+        ]
+        G.add_edges_from(edges)
+        
+        # Set up the plot
+        plt.figure(figsize=(12, 6))
+        
+        # Use spring layout for more reliable rendering
+        pos = nx.spring_layout(G, seed=42)
+        
+        # Define node colors
+        node_colors = {
+            'START': 'lightgray',
+            'END': 'lightgray',
+            'display_embedding_model_info': 'lightblue',
+            'detect_language': 'lightblue',
+            'generate_research_queries': 'lightblue',
+            'retrieve_rag_documents': 'lightgreen',
+            'summarize_query_research': 'lightgreen',
+            'generate_final_answer': 'lightblue'
+        }
+        
+        # Draw nodes
+        for node in G.nodes():
+            nx.draw_networkx_nodes(
+                G, pos, 
+                nodelist=[node], 
+                node_color=node_colors.get(node, 'lightblue'),
+                node_size=2500,
+                alpha=0.8
+            )
+        
+        # Draw edges
+        nx.draw_networkx_edges(
+            G, pos, 
+            arrows=True, 
+            arrowsize=20, 
+            edge_color='gray',
+            width=2.0
+        )
+        
+        # Draw node labels
+        node_labels = {
+            'START': 'START',
+            'display_embedding_model_info': 'Display Embedding\nModel Info',
+            'detect_language': 'Detect Language',
+            'generate_research_queries': 'Generate Research\nQueries',
+            'retrieve_rag_documents': 'Retrieve RAG\nDocuments',
+            'summarize_query_research': 'Summarize Query\nResearch',
+            'generate_final_answer': 'Generate Final\nAnswer',
+            'END': 'END'
+        }
+        nx.draw_networkx_labels(G, pos, labels=node_labels, font_size=10, font_weight='bold')
+        
+        # Add embedding and LLM info
+        from src.assistant.v1_1.configuration_v1_1 import get_config_instance
+        config = get_config_instance()
+        embedding_model = config.embedding_model
+        summarization_llm = st.session_state.get('summarization_llm', 'llama3.2')
+        report_llm = st.session_state.get('report_llm', 'qwq')
+        
+        # Add text with model info
+        plt.figtext(0.5, 0.98, f"Embedding Model: {embedding_model}", ha="center", fontsize=12, 
+                   bbox={"facecolor":"lightgray", "alpha":0.5, "pad":5})
+        plt.figtext(0.5, 0.03, f"Summarization LLM: {summarization_llm} | Report LLM: {report_llm}", 
+                  ha="center", fontsize=10, bbox={"facecolor":"lightgray", "alpha":0.5, "pad":5})
+        
+        # Remove axis
+        plt.axis('off')
+        
+        # Save the figure to the same directory as app_v1_1.py
+        plt.tight_layout()
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        temp_file_path = os.path.join(current_dir, "langgraph_workflow.png")
+        plt.savefig(temp_file_path, dpi=100, bbox_inches='tight')
+        plt.close()
+        
+        return temp_file_path
+    
+    except Exception as e:
+        # If visualization fails, return the error
+        print(f"Error generating visualization: {str(e)}")
+        return None
+
+def generate_workflow_visualization(return_mermaid_only=False):
+    """
+    Generate a visualization of the LangGraph workflow.
+    If return_mermaid_only is True, it will only return the Mermaid representation.
+    Otherwise, it returns the Mermaid representation.
+    """
+    # Always return mermaid representation for simplicity and compatibility
+    return create_mermaid_representation()
 
 def generate_response(user_input, enable_web_search, report_structure, max_search_queries, report_llm, enable_quality_checker, quality_check_loops=1, use_ext_database=False, selected_database=None, k_results=3):
     """
@@ -138,9 +403,9 @@ def generate_response(user_input, enable_web_search, report_structure, max_searc
         "enable_web_search": enable_web_search,
         "report_structure": report_structure,
         "max_search_queries": max_search_queries,
-        "llm_model": st.session_state.report_llm,  # General purpose LLM model (used for most tasks)
-        "report_llm": st.session_state.report_llm,  # Specific LLM for report writing
-        "summarization_llm": st.session_state.summarization_llm,  # Specific LLM for summarization
+        "llm_model": st.session_state.report_llm,  # General purpose LLM model (used for research queries)
+        "report_llm": st.session_state.report_llm,  # Specific LLM for report writing and final answer
+        "summarization_llm": st.session_state.summarization_llm,  # Specific LLM for document summarization only
         "enable_quality_checker": enable_quality_checker,
         "quality_check_loops": quality_check_loops,
         "k_results": k_results,  # Number of results to retrieve for each query
@@ -179,10 +444,40 @@ def generate_response(user_input, enable_web_search, report_structure, max_searc
             
             # Display the LangGraph workflow visualization
             st.subheader("LangGraph Workflow Visualization")
+            
+            # Display embedding model information
+            from src.assistant.v1_1.configuration_v1_1 import get_config_instance
+            config = get_config_instance()
+            embedding_model = config.embedding_model
+            st.info(f"**Embedding Model:** {embedding_model}")
+            
+            # Display LLM model information
+            st.info(f"**Summarization LLM:** {st.session_state.summarization_llm} | **Report LLM:** {st.session_state.report_llm}")
+            
+            # Display Mermaid diagram 
+            mermaid_representation = create_mermaid_representation()
+            mermaid_content = f"```mermaid\n{mermaid_representation}\n```"
+            st.markdown(mermaid_content)
+            
+            # Display the actual langgraph visualization
+            st.write("### LangGraph Workflow")
+            
+            # Always generate a new visualization
             try:
-                st.markdown(generate_workflow_visualization())
+                # Generate the visualization and save to a fixed location
+                generate_langgraph_visualization()
             except Exception as e:
-                st.error(f"Error generating workflow visualization: {str(e)}")
+                st.warning(f"Could not generate new visualization: {str(e)}")
+            
+            # Always display the PNG file from the same directory as app_v1_1.py
+            current_dir = os.path.dirname(os.path.abspath(__file__))
+            workflow_img_path = os.path.join(current_dir, "langgraph_workflow.png")
+            
+            # Display the image
+            if os.path.exists(workflow_img_path):
+                st.image(workflow_img_path, caption="LangGraph Workflow (Generated from graph structure)", use_container_width=True)
+            else:
+                st.error(f"Workflow visualization image not found at {workflow_img_path}")
             
             # First display the final answer
             if 'final_answer' in state and state['final_answer']:
@@ -432,11 +727,24 @@ def generate_response(user_input, enable_web_search, report_structure, max_searc
             
             # Display the actual langgraph visualization
             st.write("### LangGraph Workflow")
-            # Just use the mermaid visualization we already have
+            
+            # Always generate a new visualization
             try:
-                st.markdown(f"```mermaid\n{generate_workflow_visualization()}\n```")
+                # Generate the visualization and save to a fixed location
+                generate_langgraph_visualization()
             except Exception as e:
-                st.error(f"Error generating graph visualization: {str(e)}")
+                st.warning(f"Could not generate new visualization: {str(e)}")
+            
+            # Always display the PNG file from the same directory as app_v1_1.py
+            current_dir = os.path.dirname(os.path.abspath(__file__))
+            workflow_img_path = os.path.join(current_dir, "langgraph_workflow.png")
+            
+            # Display the image
+            if os.path.exists(workflow_img_path):
+                st.image(workflow_img_path, caption="LangGraph Workflow (Generated from graph structure)", use_container_width=True)
+            else:
+                st.error(f"Workflow visualization image not found at {workflow_img_path}")
+            
             
             st.write("---")
             
@@ -730,9 +1038,9 @@ def main():
     if "k_results" not in st.session_state:
         st.session_state.k_results = 3  # Default number of results to retrieve
     if "summarization_llm" not in st.session_state:
-        st.session_state.summarization_llm = "deepseek-r1:latest"  # Default summarization LLM
+        st.session_state.summarization_llm = "llama3.2"  # Default summarization LLM
     if "report_llm" not in st.session_state:
-        st.session_state.report_llm = "deepseek-r1:latest"  # Default report writing LLM
+        st.session_state.report_llm = "qwq"  # Default report writing LLM
     if "detected_language" not in st.session_state:
         st.session_state.detected_language = ""  # Will be populated by language detection
 
@@ -740,8 +1048,8 @@ def main():
     st.sidebar.title("Research Settings")
 
     # Add Report LLM model selector to sidebar
-    llm_models = ["deepseek-r1:latest", "deepseek-r1:70b", "qwq", "gemma3:27b", "mistral-small:latest", 
-                 "deepseek-r1:1.5b", "llama3.1:8b-instruct-q4_0", "llama3.2", "llama3.3","gemma3:4b", "phi4-mini", 
+    llm_models = ["qwq", "deepseek-r1:latest", "deepseek-r1:70b", "gemma3:27b", "mistral-small:latest", 
+                 "deepseek-r1:1.5b", "llama3.1:8b-instruct-q4_0", "llama3.2", "llama3.3", "llama3.3:70b-instruct-q4_K_M", "gemma3:4b", "phi4-mini", 
                  "mistral:instruct", "mistrallite"]
     
     st.sidebar.subheader("LLM Models")

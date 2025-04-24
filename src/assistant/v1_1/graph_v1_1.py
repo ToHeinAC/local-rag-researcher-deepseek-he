@@ -1,4 +1,6 @@
 import datetime
+import os
+import pathlib
 from typing_extensions import Literal
 from langgraph.constants import Send
 from langgraph.graph import START, END, StateGraph
@@ -18,9 +20,12 @@ from src.assistant.v1_1.prompts_v1_1 import (
     REPORT_WRITER_SYSTEM_PROMPT, REPORT_WRITER_HUMAN_PROMPT,
 )
 from src.assistant.v1_1.utils_v1_1 import format_documents_with_metadata, invoke_ollama, parse_output, tavily_search, DetectedLanguage, Queries
-from src.assistant.v1_1.rag_helpers_v1_1 import source_summarizer_ollama, format_documents_as_plain_text
+from src.assistant.v1_1.rag_helpers_v1_1 import source_summarizer_ollama, format_documents_as_plain_text, parse_document_to_formatted_content
 import re
 import time
+
+# Get the directory path of the current file (graph_v1_1.py)
+this_path = os.path.dirname(os.path.abspath(__file__))
 
 
 # Initialize the researcher graph
@@ -30,7 +35,8 @@ researcher_graph = StateGraph(ResearcherState)
 def detect_language(state: ResearcherState, config: RunnableConfig):
     print("--- Detecting language of user query ---")
     query = state["user_query"]  # Get the query from user_query
-    llm_model = config["configurable"].get("llm_model", "deepseek-r1:latest")
+    # Use the report writer LLM for language detection
+    llm_model = config["configurable"].get("report_llm", "qwq")
     
     # First check if a language is already set in the config (from GUI)
     user_selected_language = config["configurable"].get("selected_language", None)
@@ -87,7 +93,8 @@ def generate_research_queries(state: ResearcherState, config: RunnableConfig):
     query = state["user_query"]  # Get the query from user_query
     detected_language = state["detected_language"]
     max_queries = config["configurable"].get("max_search_queries", 3)
-    llm_model = config["configurable"].get("report_llm", "deepseek-r1:latest")
+    # Use the report writer LLM for generating research queries
+    llm_model = config["configurable"].get("report_llm", "qwq")
     
     # Get additional context if available
     additional_context = state.get("additional_context", "")
@@ -312,6 +319,7 @@ def summarize_query_research(state: ResearcherState, config: RunnableConfig):
             print(f"  [INFO] Using original query: '{research_queries[0]}'")
     
     # Get language and LLM model for summarization
+    # Use the dedicated summarization LLM for document summarization
     summarization_llm = config["configurable"].get("summarization_llm", "llama3.2")
     detected_language = state.get("detected_language", config["configurable"].get("detected_language", "English"))
     print(f"  [Using language: {detected_language}]")
@@ -459,8 +467,8 @@ def generate_final_answer(state: ResearcherState, config: RunnableConfig):
     print("--- Generating final answer ---")
     # Print current state keys for debugging
     print(f"  [DEBUG] Current state keys: {list(state.keys())}")
-    # Use the report writing LLM model instead of the general purpose LLM model
-    report_llm = config["configurable"].get("report_llm", "deepseek-r1:latest")
+    # Use the report writing LLM model for generating the final answer
+    report_llm = config["configurable"].get("report_llm", "qwq")
     
     # Get detected language
     detected_language = state.get("detected_language", "English")
@@ -516,8 +524,10 @@ def generate_final_answer(state: ResearcherState, config: RunnableConfig):
             # Combine all document content for this query
             content = "\n".join([doc.page_content for doc in docs])
             
+            formatted_content = parse_document_to_formatted_content(content)
+
             # Add formatted content with query and summary
-            formatted_info.append(f"## Research Query {i+1}: {query}\n-> Summarizer Answer:{content}\n\n")
+            formatted_info.append(f"{formatted_content}\n\n")
         
         # Join all formatted summaries
         information = "\n\n".join(formatted_info)
@@ -547,7 +557,7 @@ def generate_final_answer(state: ResearcherState, config: RunnableConfig):
                             content = str(summary)
                     
                     # Add formatted content with query and summary
-                    formatted_info.append(f"## Research Query {i+1}: {query}\n\n{content}\n")
+                    formatted_info.append(f"##{query}\n{content}\n\n")
                 
                 # Join all formatted summaries
                 information = "\n\n".join(formatted_info)
@@ -562,7 +572,11 @@ def generate_final_answer(state: ResearcherState, config: RunnableConfig):
         
         print(f"  [DEBUG] Using information from {len(search_summaries)} summaries (length: {len(information)})")
         if information:
-            print(f"  [DEBUG] Information preview (first 200 chars): {information[:200]}...")
+            print(f"  [DEBUG] Information preview (first 200 chars): {information[:200]}... {information[-200:]}")
+    
+    # for debugging, export the information
+    with open(os.path.join(this_path, "information.txt"), "w", encoding="utf-8") as f:
+        f.write(information)
     
     # Format the human prompt
     human_prompt = REPORT_WRITER_HUMAN_PROMPT.format(

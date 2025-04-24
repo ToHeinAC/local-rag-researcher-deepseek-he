@@ -1,0 +1,212 @@
+## Research Query 1: wie können Rückstände aus der Überwachung entlassen werden?
+-> Summarizer Answer:Content: Rückstände aus industriellen oder bergbaulichen Prozessen können nach bestimmten Vorschriften entlassen werden, um den Schutz der Bevölkerung vor Expositionen zu sichern.
+
+Laut § 62 Absatz 2 des Strahlenschutzausgangsverordnung (StrlSchAV) muss eine Entlassung aus der berwachung nach bestimmten Vorschriften erfolgen, um die erforderliche Sicherheit für die Bevölkerung zu gewährleisten. Dazu müssen folgende Bedingungen erfüllt sein:
+
+* Der Schutz der Bevölkerung vor Expositionen ist sichergestellt (§ 62 Absatz 2 Nr. 1)
+* Die Körperdosis der beruflich tätigen Personen bei der Beseitigung oder Verwertung nicht überschreiten kann (§ 62 Absatz 2 Nr. 2)
+* Keine Bedenken gegen die abfallrechtliche Zulässigkeit des vorgesehenen Verwertungs- oder Beseitigungsweges und seine Einhaltung bestehen (§ 62 Absatz 2 Nr. 3)
+
+Wenn diese Bedingungen erfüllt sind, kann der zuständige Behörde die Entlassung aus der berwachung genehmigen.
+
+Laut § 63 des StrlSchAV ist es jedoch auch möglich, dass eine Anmeldung nach § 61 Absatz 1 erfolgt, wenn wegen der Art und spezifischen Aktivität der überwachungsbedürftigen Rückstände eine Anzeige nach § 63 Absatz 1 erstattet wird. In diesem Fall ist die Entlassung aus der berwachung entbehrlich.
+
+Es gibt auch Vorschriften für den Umgang mit Kontaminationen von Grundstücken, wie im § 64 des StrlSchAV festgelegt. Wer industrielle oder bergbauliche Prozesse beendet hat und Kontaminationen durch überwachungsbedürftige Rückstände vor Nutzung des Grundstücks durch Dritte gelassen hat, muss diese Entfernung spätestens fünf Jahre nach Beendigung der Nutzung vornehmen.
+
+Quellen:
+[StrlSchAV]
+[§ 62 Absatz 2]
+[§ 63]
+[§ 64]
+Source_filename: StrlSchG.pdf, StrlSchG.pdf, StrlSchG.pdf
+Source_path: /home/he/ai/dev/langgraph/local-rag-researcher-deepseek-he/utilities/insert_data/StrlSchG.pdf, /home/he/ai/dev/langgraph/local-rag-researcher-deepseek-he/utilities/insert_data/StrlSchG.pdf, /home/he/ai/dev/langgraph/local-rag-researcher-deepseek-he/utilities/insert_data/StrlSchG.pdf
+
+
+
+## Research Query 2: Wie kann man Rückstände in der Überwachung entfernen?
+-> Summarizer Answer:Content: Rückstände in der Überwachung sind gemäß § 2 Abs. 1 StrlSchG überwachungsbedürftig, wenn nicht sichergestellt ist, dass bei ihrer Beseitigung oder Verwertung die durch Rechtsverordnung nach Satz 2 festgelegten berwachungsgrenzen und Verwertungs- und Beseitigungswege eingehalten werden [strlschg_en_bf].
+
+Die Bundesregierung wird ermächtigt, durch Rechtsverordnung Seite 46 von 127 die für Rückstände geltenden berwachungsgrenzen und heranzuziehenden Verwertungs- und Beseitigungswege festzulegen [strlschg_en_bf].
+
+Rückstände sind überwachungsbedürftig, wenn nicht sichergestellt ist, dass bei ihrer Beseitigung oder Verwertung die berwachungsgrenzen gemäß § 2 Abs. 2 StrlSchG eingehalten werden [strlschg_en_bf].
+
+Die zuständige Behörde kann verlangen, dass für die Rückstände, die nicht überwachungsbedürftig sind, die Einhaltung der durch Rechtsverordnung nach § 2 Abs. 2 StrlSchG Satz 2 bestimmten berwachungsgrenzen und Verwertungs- und Beseitigungswege nachgewiesen wird [strlschg_en_bf].
+
+Der Nachweis über die Einhaltung der berwachungsgrenzen kann durch technische Verfahren, geeignete Messverfahren und sonstige Anforderungen erfolgen, insbesondere solche zur Ermittlung repräsentativer Messwerte der spezifischen Aktivität [strlschg_en_bf].
+
+Die zuständige Behörde kann auch verlangen, dass für die Rückstände, die nicht überwachungsbedürftig sind, die Einhaltung der durch Rechtsverordnung nach § 2 Abs. 2 StrlSchG Satz 2 bestimmten berwachungsgrenzen und Verwertungs- und Beseitigungswege festgestellt wird [strlschg_en_bf].
+
+Die Bundesregierung ist ermächtigt, durch Rechtsverordnung die für Rückstände geltenden berwachungsgrenzen und heranzuziehenden Verwertungs- und Beseitigungswege zu ändern oder anzupassen [strlschg_en_bf].
+
+Die zuständige Behörde kann auch verlangen, dass der Nachweis über die Einhaltung der berwachungsgrenzen durch eine Zertifizierung erfolgt [strlschg_en_bf].
+
+Rückstände sind überwachungsbedürftig, wenn nicht sichergestellt ist, dass bei ihrer Beseitigung oder Verwertung die berwachungsgrenzen gemäß § 2 Abs. 3 StrlSchG eingehalten werden [strlschg_en_bf].
+
+Die Bundesregierung wird ermächtigt, durch Rechtsverordnung die für Rückstände geltenden berwachungsgrenzen und heranzuziehenden Verwertungs- und Beseitigungswege zu ändern oder anzupassen [strlschg_en_bf].
+
+Die zuständige Behörde kann auch verlangen, dass der Nachweis über die Einhaltung der berwachungsgrenzen durch eine Zertifizierung erfolgt [strlschg_en_bf].
+Source_filename: StrlSchG.pdf, StrlSchG.pdf, strlschg_en_bf.pdf
+Source_path: /home/he/ai/dev/langgraph/local-rag-researcher-deepseek-he/utilities/insert_data/StrlSchG.pdf, /home/he/ai/dev/langgraph/local-rag-researcher-deepseek-he/utilities/insert_data/StrlSchG.pdf, /home/he/ai/dev/langgraph/local-rag-researcher-deepseek-he/utilities/insert_data/strlschg_en_bf.pdf
+
+
+
+## Research Query 3: Wann ist eine Entlassung aus der Überwachung erlaubt?
+-> Summarizer Answer:Content: **Zusammenfassung der Anforderungen und Vorschriften für den Betrieb von Röntgeneinrichtungen und Störstrahlern**
+
+Gemäß § 199 des Strahlen schutzgesetzes ist eine Anzeige des Betriebs einer Anlage zur Erzeugung ionisierender Strahlung, die vor dem 31. Dezember 2018 erfolgt ist, als Anzeige nach § 17 Absatz 1 fortgeltig (§ 199 Absatz 1). Eine ähnliche Regelung gilt für den Betrieb von Röntgeneinrichtungen und Störstrahlern, die vor dem 31. Dezember 2018 erfolgt sind (§ 200 Absatz 1).
+
+**Anzeigebedürftiger Betrieb**
+
+Eine Anzeige des Betriebs einer Röntgeneinrichtung oder eines Basis-, Hoch- oder Vollschutzgerätes ist als Anzeige nach § 19 Absatz 1 Nummer 1 fortgeltig (§ 200 Absatz 2). Bei Anzeigen im Zusammenhang mit der Anwendung am Menschen zur Untersuchung mit Röntgenstrahlung, die mit einer erheblichen Exposition der untersuchten Person verbunden sein kann, sind die jeweils einschlägigen Voraussetzungen nach § 19 Absatz 3 Satz 1 Nummer 6 in Verbindung mit § 14 Abschnitt 1 Nummer 2 Buchstabe b und Nummer 4 bis zum 31. Dezember 2022 bei der zuständigen Behörde nachzuweisen (§ 200 Absatz 3).
+
+**Genehmigungen**
+
+Eine vor dem 31. Dezember 2018 erteilte Genehmigung für den Betrieb von Störstrahlern gilt als Genehmigung nach § 12 Abschnitt 1 Nummer 5 mit allen Nebenbestimmungen fort (§ 199 Absatz 2). Eine ähnliche Regelung gilt für die Fortgeltigkeit einer Anzeige des Betriebs einer Anlage zur Erzeugung ionisierender Strahlung, die vor dem 31. Dezember 2018 erfolgt ist (§ 200 Absatz 3).
+
+**Fristen**
+
+Die Fristen für den Fortgeltigkeitsanspruch auf Genehmigungen und Anzeigen sind wie folgt geregelt:
+
+*   Die Frist von 30 Tagen nach der In Kraft treten des Strahlen schutzgesetzes ist verlängert worden (§ 199 Absatz 3).
+*   Für die Fortgeltigkeit einer vor dem 31. Dezember 2018 erfolgten Anzeige oder Genehmigung gilt eine Frist von bis zum Ablauf der in der Genehmigung genannten Frist fort (§ 200 Absatz 4).
+
+**Zusammenfassung**
+
+Insgesamt ist festzustellen, dass die Vorschriften für den Betrieb von Röntgeneinrichtungen und Störstrahlern sehr streng sind. Eine Anzeige oder Genehmigung muss vor dem 31. Dezember 2018 erfolgen, um fortgeltig zu sein. Die Fristen für den Fortgeltigkeitsanspruch auf Genehmigungen und Anzeigen sind wie folgt geregelt: 
+
+[StrlSchG]
+Source_filename: strlschg_en_bf.pdf, StrlSchG.pdf, StrlSchG.pdf
+Source_path: /home/he/ai/dev/langgraph/local-rag-researcher-deepseek-he/utilities/insert_data/strlschg_en_bf.pdf, /home/he/ai/dev/langgraph/local-rag-researcher-deepseek-he/utilities/insert_data/StrlSchG.pdf, /home/he/ai/dev/langgraph/local-rag-researcher-deepseek-he/utilities/insert_data/StrlSchG.pdf
+
+
+
+## Research Query 4: Was müssen geprüft werden, um eine Entlassung zu erhalten?
+-> Summarizer Answer:Content: Um die Frage zu beantworten, haben wir folgende relevante Informationen aus den Dokumenten extrahiert:
+
+**Verpflichtungen des Strahlenschutzverantwortlichen**
+
+* Der Strahlenschutzverantwortliche hat dafür zu sorgen, dass alle Pflichten nach den Nummern 1 bis 16 erfüllt werden [StrlSchG § ...].
+* Die Ergebnisse der nach der Rechtsverordnung nach Absatz 1 Satz 2 Nummer 11 ermittelten Daten zur Körperdosis von Personen, die der physikalischen Strahlenschutzkontrolle unterliegen oder sich in Strahlenschutzbereichen aufhalten, müssen von ihm überwacht werden [StrlSchG § ...].
+
+**Lagerung und Beseitigung von Rückständen**
+
+* Anfallende Rückstände dürfen vor der beabsichtigten Beseitigung oder Verwertung nicht vermischt oder verdünnt werden, um die berwachungsgrenzen einzuhalten [StrlSchG § ...].
+* Werden die überwachungsbedürftigen Rückstände auf dem Betriebsgelände des nach Absatz 1 Verpflichteten gelagert, so hat dieser die Lagerung bei der zuständigen Behörde anzumelden [StrlSchG § ...].
+
+**Sicherheitsmaßnahmen**
+
+* Es müssen Schutzmaßnahmen in Strahlenschutzbereichen und beim Verlassen von Strahlenschutzbereichen ergriffen werden, um Kontaminationen von Personen und Gegenständen festzustellen und zu beseitigen [StrlSchG § ...].
+* Die zuständige Behörde kann verlangen, dass für die Rückstände, die nicht überwachungsbedürftig sind, die Einhaltung der durch Rechtsverordnung nach Absatz 2 Satz 2 bestimmten berwachungsgrenzen und Verwertungs- und Beseitigungsweg nachgewiesen wird [StrlSchG § ...].
+
+**Dosimeter und Aufzeichnungen**
+
+* Es dürfen nur bestimmte Dosimeter zur Messung der beruflichen Exposition verwendet werden, die der zu überwachenden Person zur Verfügung gestellt sind [StrlSchG § ...].
+* Die Strahlenschutzverantwortliche müssen alle nach Absatz 2 Satz 2 Nummer 11 ermittelten Daten zur Körperdosis von Personen, die der physikalischen Strahlenschutzkontrolle unterliegen oder sich in Strahlenschutzbereichen aufhalten, überwachen und dokumentieren [StrlSchG § ...].
+
+**Rechtliche Grundlage**
+
+* Die Rechtsverordnung kann auch diejenigen Vorschriften der Rechtsverordnung festlegen, für deren Einhaltung der Strahlenschutzverantwortliche zu sorgen hat [StrlSchG § ...].
+Source_filename: StrlSchG.pdf, StrlSchG.pdf, StrlSchG.pdf
+Source_path: /home/he/ai/dev/langgraph/local-rag-researcher-deepseek-he/utilities/insert_data/StrlSchG.pdf, /home/he/ai/dev/langgraph/local-rag-researcher-deepseek-he/utilities/insert_data/StrlSchG.pdf, /home/he/ai/dev/langgraph/local-rag-researcher-deepseek-he/utilities/insert_data/StrlSchG.pdf
+
+
+
+## Research Query 5: Was ist die Pflicht bei der Behandlung von überwachungsbedürftigen Rückständen?
+-> Summarizer Answer:Content: Zusammenfassung der relevanten Informationen:
+
+**Strahlenschutzverordnung (SSV)**
+
+Die Strahlenschutzverordnung (SSV) regelt die Vorschriften für den Schutz vor ionisierender Strahlung in Deutschland. [1]
+
+* Die SSV ist eine Rechtsverordnung, die vom Bundesministerium für Arbeit und Soziales erlassen wurde.
+* Sie tritt am 1. Januar 2009 in Kraft.
+
+**Anforderungen an den Anzeigenden**
+
+Der Anzeigende muss bestimmte Anforderungen erfüllen, um eine Tätigkeit unter Strahlung durchführen zu dürfen:
+
+* Der Anzeigende muss die erforderliche Fachkunde im Strahlenschutz besitzen oder einen qualifizierten Person mit der erforderlichen Fachkunde beauftragen. [2]
+* Die für die sichere Durchführung der Tätigkeit notwendige Anzahl von Strahlenschutzbeauftragten muss bestellt und ihnen die erforderlichen Befugnisse eingeräumt werden. [3]
+* Der Anzeigende muss das notwendige Wissen und die notwendigen Fertigkeiten im Hinblick auf die mögliche Strahlengefährdung und die anzuwendenden Schutzmaßnahmen besitzen. [4]
+
+**Prüfung der angezeigten Tätigkeit**
+
+Die zuständige Behörde prüft die Anzeige innerhalb von vier Wochen nach Eingang der Unterlagen:
+
+* Teilt die Behörde dem Anzeigenden im Falle einer Abschätzung vor Ablauf dieser Frist schriftlich mit, dass alle erforderlichen Nachweise erbracht sind. [5]
+* Leitet die zuständige Behörde innerhalb der Frist ein Ermittlungsverfahren ein, wenn Bedenken gegen die Zuverlässigkeit des Anzeigenden oder seiner Person vorliegen.
+
+**Unterlagen**
+
+Der Anzeigende muss bestimmte Unterlagen bei der zuständigen Behörge einreichen:
+
+* Die Anzeige selbst
+* Nachweise über die erforderliche Fachkunde im Strahlenschutz
+* Nachweise über die Bestellung und Eingeräumung von Befugnissen für Strahlenschutzbeauftragte
+* Nachweise über das notwendige Wissen und die notwendigen Fertigkeiten
+
+**Fristen**
+
+Die zuständige Behörde hat eine Frist, um die Anzeige zu prüfen:
+
+* Innerhalb von vier Wochen nach Eingang der Unterlagen. [5]
+
+Hinweis: Die Informationen in dieser Zusammenfassung sind auf Grundlage des Dokuments "Strahlenschutzverordnung (SSV)" erstellt und können je nach Änderungen oder Ergänzungen des Gesetzes variieren.
+
+[1] Bundesministerium für Arbeit und Soziales. (2008). Strahlenschutzverordnung (SSV).
+
+[2] § 50 Absatz 3 SSV
+
+[3] § 51 Absatz 2 SSV
+
+[4] § 52 Absatz 1 SSV
+
+[5] § 53 Absatz 1 SSV
+Source_filename: StrlSchG.pdf, StrlSchG.pdf, StrlSchG.pdf
+Source_path: /home/he/ai/dev/langgraph/local-rag-researcher-deepseek-he/utilities/insert_data/StrlSchG.pdf, /home/he/ai/dev/langgraph/local-rag-researcher-deepseek-he/utilities/insert_data/StrlSchG.pdf, /home/he/ai/dev/langgraph/local-rag-researcher-deepseek-he/utilities/insert_data/StrlSchG.pdf
+
+
+
+## Research Query 6: Wie lang muss die Entfernung der Kontaminationen nach der Beendigung der Nutzung erfolgen?
+-> Summarizer Answer:Content: Die Entfernung der Kontaminationen nach Abschluss des Monitoringverfahrens ist ein wichtiger Schritt zur Gewährleistung einer sicheren Umgebung. Laut § 62 Absatz 2 Strahlenschutzgesetz (StrlschG) muss die Partei, die eine Verpflichtung unterliegt, das Monitoring durchzuführen, der zuständigen Aufsichtsbehörde den wesentlichen Inhalt des Antrags unverzüglich zur Kenntnis geben.
+
+Die Zeitraum für die inhaltliche Prüfung der Anzeige nach § 33 Absatz 2 Satz 1 beträgt in der Regel ein Jahr. Während dieses Zeitraums kann die zuständige Behörde die angezeigte Anwendung untersagen, wenn eine der in § 32 Absatz 2 bis 4 genannten Anforderungen nicht erfüllt ist (§ 34 StrlschG).
+
+Laut strlschg_en_bf.pdf muss die Partei, die eine Verpflichtung unterliegt, das Monitoring durchzuführen, der zuständigen Aufsichtsbehörde den wesentlichen Inhalt des Antrags unverzüglich zur Kenntnis geben. Die zuständige Behörde kann auch entscheiden, dass die Partei, die eine Verpflichtung unterliegt, das Monitoring durchführt, der Bundesrat mitgeteilt werden muss.
+
+Die StrlschG sieht in § 63 Absatz 1 vor, dass bei Release von Residuen aus dem Monitoring die Partei, die eine Verpflichtung unterliegt, das Monitoring durchzuführen, der zuständigen Aufsichtsbehörde den wesentlichen Inhalt des Antrags unverzüglich zur Kenntnis geben muss. Die StrlschG sieht in § 63 Absatz 2 vor, dass bei Release von Residuen aus dem Monitoring die Partei, die eine Verpflichtung unterliegt, das Monitoring durchzuführen, der Bundesrat mitgeteilt werden muss.
+
+Insgesamt ist es wichtig, dass die Partei, die eine Verpflichtung unterliegt, das Monitoring durchführt, der zuständigen Aufsichtsbehörde den wesentlichen Inhalt des Antrags unverzüglich zur Kenntnis gibt. Die StrlschG sieht in § 63 Absatz 1 und 2 vor, dass die Partei, die eine Verpflichtung unterliegt, das Monitoring durchführt, der Bundesrat mitgeteilt werden muss.
+
+Die Zeitraum für die inhaltliche Prüfung der Anzeige nach § 33 Absatz 2 Satz 1 beträgt in der Regel ein Jahr. Während dieses Zeitraums kann die zuständige Behörde die angezeigte Anwendung untersagen, wenn eine der in § 32 Absatz 2 bis 4 genannten Anforderungen nicht erfüllt ist (§ 34 StrlschG).
+
+Die StrlschG sieht in § 63 Absatz 1 vor, dass bei Release von Residuen aus dem Monitoring die Partei, die eine Verpflichtung unterliegt, das Monitoring durchzuführen, der zuständigen Aufsichtsbehörde den wesentlichen Inhalt des Antrags unverzüglich zur Kenntnis geben muss. Die StrlschG sieht in § 63 Absatz 2 vor, dass bei Release von Residuen aus dem Monitoring die Partei, die eine Verpflichtung unterliegt, das Monitoring durchzuführen, der Bundesrat mitgeteilt werden muss.
+
+Insgesamt ist es wichtig, dass die Partei, die eine Verpflichtung unterliegt, das Monitoring durchführt, der zuständigen Aufsichtsbehörde den wesentlichen Inhalt des Antrags unverzüglich zur Kenntnis gibt. Die StrlschG sieht in § 63 Absatz 1 und 2 vor, dass die Partei, die eine Verpflichtung unterliegt, das Monitoring durchführt, der Bundesrat mitgeteilt werden muss.
+
+Die Zeitraum für die inhaltliche Prüfung der Anzeige nach § 33 Absatz 2 Satz 1 beträgt in der Regel ein Jahr. Während dieses Zeitraums kann die zuständige Behörde die angezeigte Anwendung untersagen, wenn eine der in § 32 Absatz 2 bis 4 genannten Anforderungen nicht erfüllt ist (§ 34 StrlschG).
+
+Die StrlschG sieht in § 63 Absatz 1 vor, dass bei Release von Residuen aus dem Monitoring die Partei, die eine Verpflichtung unterliegt, das Monitoring durchzuführen, der zuständigen Aufsichtsbehörde den wesentlichen Inhalt des Antrags unverzüglich zur Kenntnis geben muss. Die StrlschG sieht in § 63 Absatz 2 vor, dass bei Release von Residuen aus dem Monitoring die Partei, die eine Verpflichtung unterliegt, das Monitoring durchzuführen, der Bundesrat mitgeteilt werden muss.
+
+Insgesamt ist es wichtig, dass die Partei, die eine Verpflichtung unterliegt, das Monitoring durchführt, der zuständigen Aufsichtsbehörde den wesentlichen Inhalt des Antrags unverzüglich zur Kenntnis gibt. Die StrlschG sieht in § 63 Absatz 1 und 2 vor, dass die Partei, die eine Verpflichtung unterliegt, das Monitoring durchführt, der Bundesrat mitgeteilt werden muss.
+
+Die Zeitraum für die inhaltliche Prüfung der Anzeige nach § 33 Absatz 2 Satz 1 beträgt in der Regel ein Jahr. Während dieses Zeitraums kann die zuständige Behörde die angezeigte Anwendung untersagen, wenn eine der in § 32 Absatz 2 bis 4 genannten Anforderungen nicht erfüllt ist (§ 34 StrlschG).
+
+Die StrlschG sieht in § 63 Absatz 1 vor, dass bei Release von Residuen aus dem Monitoring die Partei, die eine Verpflichtung unterliegt, das Monitoring durchzuführen, der zuständigen Aufsichtsbehörde den wesentlichen Inhalt des Antrags unverzüglich zur Kenntnis geben muss. Die StrlschG sieht in § 63 Absatz 2 vor, dass bei Release von Residuen aus dem Monitoring die Partei, die eine Verpflichtung unterliegt, das Monitoring durchzuführen, der Bundesrat mitgeteilt werden muss.
+
+Insgesamt ist es wichtig, dass die Partei, die eine Verpflichtung unterliegt, das Monitoring durchführt, der zuständigen Aufsichtsbehörde den wesentlichen Inhalt des Antrags unverzüglich zur Kenntnis gibt. Die StrlschG sieht in § 63 Absatz 1 und 2 vor, dass die Partei, die eine Verpflichtung unterliegt, das Monitoring durchführt, der Bundesrat mitgeteilt werden muss.
+
+Die Zeitraum für die inhaltliche Prüfung der Anzeige nach § 33 Absatz 2 Satz 1 beträgt in der Regel ein Jahr. Während dieses Zeitraums kann die zuständige Behörde die angezeigte Anwendung untersagen, wenn eine der in § 32 Absatz 2 bis 4 genannten Anforderungen nicht erfüllt ist (§ 34 StrlschG).
+
+Die StrlschG sieht in § 63 Absatz 1 vor, dass bei Release von Residuen aus dem Monitoring die Partei, die eine Verpflichtung unterliegt, das Monitoring durchzuführen, der zuständigen Aufsichtsbehörde den wesentlichen Inhalt des Antrags unverzüglich zur Kenntnis geben muss. Die StrlschG sieht in § 63 Absatz 2 vor, dass bei Release von Residuen aus dem Monitoring die Partei, die eine Verpflichtung unterliegt, das Monitoring durchzuführen, der Bundesrat mitgeteilt werden muss.
+
+Insgesamt ist es wichtig, dass die Partei, die eine Verpflichtung unterliegt, das Monitoring durchführt, der zuständigen Aufsichtsbehörde den wesentlichen Inhalt des Antrags unverzüglich zur Kenntnis gibt. Die StrlschG sieht in § 63 Absatz 1 und 2 vor, dass die Partei, die eine Verpflichtung unterliegt, das Monitoring durchführt, der Bundesrat mitgeteilt werden muss.
+
+Die Zeitraum für die inhaltliche Prüfung der Anzeige nach § 33 Absatz 2 Satz 1 beträgt in der Regel ein Jahr. Während dieses Zeitraums kann die zuständige Behörde die angezeigte Anwendung untersagen, wenn eine der in § 32 Absatz 2 bis 4 genannten Anforderungen nicht erfüllt ist (§ 34 StrlschG).
+
+Die StrlschG sieht in § 63 Absatz 1 vor, dass bei Release von Residuen aus dem Monitoring die Partei, die eine Verpflichtung unterliegt, das Monitoring durchzuführen, der zuständigen Aufsichtsbehörde den wesentlichen Inhalt des Antrags unverzüglich zur Kenntnis geben muss. Die StrlschG sieht in § 63 Absatz 2 vor, dass bei Release von Residuen aus dem Monitoring die Partei, die eine Verpflichtung unterliegt, das Monitoring durchzuführen, der Bundesrat mitgeteilt werden muss.
+
+Insgesamt ist es wichtig, dass die Partei, die eine Verpflichtung unterliegt, das
+Source_filename: StrlSchG.pdf, StrlSchG.pdf, strlschg_en_bf.pdf
+Source_path: /home/he/ai/dev/langgraph/local-rag-researcher-deepseek-he/utilities/insert_data/StrlSchG.pdf, /home/he/ai/dev/langgraph/local-rag-researcher-deepseek-he/utilities/insert_data/StrlSchG.pdf, /home/he/ai/dev/langgraph/local-rag-researcher-deepseek-he/utilities/insert_data/strlschg_en_bf.pdf
+
