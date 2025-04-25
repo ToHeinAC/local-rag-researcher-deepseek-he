@@ -164,6 +164,9 @@ def invoke_ollama(model, system_prompt, user_prompt, output_format=None):
     # Use the configured model if none is specified
     if model is None:
         model = get_configured_llm_model()
+    
+    # Print the actual model being used for debugging
+    print(f"  [DEBUG] Actually using model in invoke_ollama: {model}")
         
     messages = [
         {"role": "system", "content": system_prompt},

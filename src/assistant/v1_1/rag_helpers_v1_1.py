@@ -230,6 +230,7 @@ def format_documents_as_plain_text(documents):
 def source_summarizer_ollama(query, context_documents, language, system_message, llm_model="deepseek-r1"):
     # Make sure language is explicitly passed through the entire pipeline
     print(f"Generating summary using language: {language}")
+    print(f"  [DEBUG] Actually using summarization model in source_summarizer_ollama: {llm_model}")
     # Override system_message to ensure language is set properly
     from src.assistant.v1_1.prompts_v1_1 import SUMMARIZER_SYSTEM_PROMPT
     system_message = SUMMARIZER_SYSTEM_PROMPT.format(language=language)

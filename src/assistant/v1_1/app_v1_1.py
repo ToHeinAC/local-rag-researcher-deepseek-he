@@ -10,6 +10,7 @@ import time
 import tempfile
 from datetime import datetime, timedelta
 from pathlib import Path
+from IPython.display import Image, display
 
 # Import visualization libraries (with fallback if not available)
 try:
@@ -29,7 +30,7 @@ logging.getLogger("streamlit").setLevel(logging.ERROR)
 
 # Import ResearcherState directly for better type hinting and consistency
 from src.assistant.v1_1.state_v1_1 import ResearcherState
-from src.assistant.v1_1.graph_v1_1 import researcher_graph
+from src.assistant.v1_1.graph_v1_1 import researcher, researcher_graph
 from src.assistant.v1_1.utils_v1_1 import get_report_structures, process_uploaded_files, clear_cuda_memory
 from src.assistant.v1_1.rag_helpers_v1_1 import similarity_search_for_tenant, transform_documents, source_summarizer_ollama
 from src.assistant.v1_1.vector_db_v1_1 import get_or_create_vector_db, search_documents, get_embedding_model_path
@@ -98,30 +99,16 @@ def get_embedding_model(model_name):
         model_kwargs={'device': 'cpu'}
     )
 
-def create_mermaid_representation():
+def create_mermaid_representation(researcher):
     """
     Create a Mermaid diagram representation of the workflow.
     
     Returns:
-        str: Mermaid diagram representation
+        Mermaid diagram representation
     """
-    return """
-    graph TD
-        START([START]) --> display_embedding_model_info["Display Embedding Model Info"]
-        display_embedding_model_info --> detect_language["Detect Language"]
-        detect_language --> generate_research_queries["Generate Research Queries"]
-        generate_research_queries --> retrieve_rag_documents["Retrieve RAG Documents"]
-        retrieve_rag_documents --> summarize_query_research["Summarize Query Research"]
-        summarize_query_research --> generate_final_answer["Generate Final Answer"]
-        generate_final_answer --> END([END])
-        
-        classDef default fill:#f9f9f9,stroke:#333,stroke-width:1px;
-        classDef active fill:#d4f1f9,stroke:#333,stroke-width:1px;
-        classDef terminal fill:#e9e9e9,stroke:#333,stroke-width:1px;
-        class START,END terminal;
-    """
+    return researcher.get_graph().draw_mermaid_png()
 
-def generate_workflow_visualization(return_mermaid_only=False):
+def generate_workflow_visualization(researcher, return_mermaid_only=False):
     """
     Generate a visualization of the LangGraph workflow using NetworkX
     
@@ -133,7 +120,7 @@ def generate_workflow_visualization(return_mermaid_only=False):
     """
     # If requested to return only Mermaid, skip NetworkX completely
     if return_mermaid_only:
-        return create_mermaid_representation()
+        return create_mermaid_representation(researcher)
         
     try:
         # Check if NetworkX is available (should be, based on the imports at the top)
@@ -368,14 +355,14 @@ def generate_langgraph_visualization():
         print(f"Error generating visualization: {str(e)}")
         return None
 
-def generate_workflow_visualization(return_mermaid_only=False):
+def generate_workflow_visualization(researcher, return_mermaid_only=False):
     """
     Generate a visualization of the LangGraph workflow.
     If return_mermaid_only is True, it will only return the Mermaid representation.
     Otherwise, it returns the Mermaid representation.
     """
     # Always return mermaid representation for simplicity and compatibility
-    return create_mermaid_representation()
+    return create_mermaid_representation(researcher)
 
 def generate_response(user_input, enable_web_search, report_structure, max_search_queries, report_llm, enable_quality_checker, quality_check_loops=1, use_ext_database=False, selected_database=None, k_results=3):
     """
@@ -398,13 +385,17 @@ def generate_response(user_input, enable_web_search, report_structure, max_searc
         "additional_context": None  # Optional field for context from document retrieval
     }
     
+    # Persist the selected LLMs in the state so the graph can access them
+    initial_state["report_llm"] = report_llm
+    initial_state["summarization_llm"] = st.session_state.summarization_llm
+    
     # Langgraph researcher config
     config = {"configurable": {
         "enable_web_search": enable_web_search,
         "report_structure": report_structure,
         "max_search_queries": max_search_queries,
-        "llm_model": st.session_state.report_llm,  # General purpose LLM model (used for research queries)
-        "report_llm": st.session_state.report_llm,  # Specific LLM for report writing and final answer
+        "llm_model": report_llm,  # General purpose LLM model (used for research queries)
+        "report_llm": report_llm,  # Specific LLM for report writing and final answer
         "summarization_llm": st.session_state.summarization_llm,  # Specific LLM for document summarization only
         "enable_quality_checker": enable_quality_checker,
         "quality_check_loops": quality_check_loops,
@@ -455,9 +446,8 @@ def generate_response(user_input, enable_web_search, report_structure, max_searc
             st.info(f"**Summarization LLM:** {st.session_state.summarization_llm} | **Report LLM:** {st.session_state.report_llm}")
             
             # Display Mermaid diagram 
-            mermaid_representation = create_mermaid_representation()
-            mermaid_content = f"```mermaid\n{mermaid_representation}\n```"
-            st.markdown(mermaid_content)
+            mermaid_representation = create_mermaid_representation(researcher)
+            st.markdown(display(Image(mermaid_representation)))
             
             # Display the actual langgraph visualization
             st.write("### LangGraph Workflow")
@@ -723,7 +713,9 @@ def generate_response(user_input, enable_web_search, report_structure, max_searc
             st.info(f"**Embedding Model:** {config_instance.embedding_model}")
             
             # Display the mermaid diagram
-            st.markdown(f"```mermaid\n{generate_workflow_visualization()}\n```")
+            current_dir = os.path.dirname(os.path.abspath(__file__))
+            graph_img_path = os.path.join(current_dir, "mermaid_researcher_graph.png")
+            st.image(graph_img_path, caption="LangGraph Workflow (Mermaid from graph structure)", use_container_width=False)
             
             # Display the actual langgraph visualization
             st.write("### LangGraph Workflow")
@@ -918,7 +910,7 @@ def generate_response(user_input, enable_web_search, report_structure, max_searc
                         with results_container:
                             st.subheader("LangGraph Workflow Visualization")
                             try:
-                                st.markdown(generate_workflow_visualization())
+                                st.markdown(generate_workflow_visualization(researcher))
                             except Exception as e:
                                 st.error(f"Error generating workflow visualization: {str(e)}")
                 
@@ -987,10 +979,8 @@ def clear_chat():
         st.session_state.selected_database = None
     if 'use_ext_database' in st.session_state:
         st.session_state.use_ext_database = False
-    if 'summarization_llm' in st.session_state:
-        st.session_state.summarization_llm = "deepseek-r1:latest"
-    if 'report_llm' in st.session_state:
-        st.session_state.report_llm = "deepseek-r1:latest"
+    # Don't reset LLM model selections when clearing chat
+    # This ensures user's model choices persist between sessions
 
 def copy_to_clipboard(text):
     """Safely copy text to clipboard if pyperclip is available"""

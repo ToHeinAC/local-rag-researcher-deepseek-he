@@ -18,9 +18,9 @@ Your output must only be a JSON object containing a single key "queries" followe
 {{ "queries": ["Query 1", "Query 2",...] }}
 
 * Always include the original user query in the queries.
-* Generate up to {max_queries} additional queries as needed.
+* Generate up to {max_queries} research queries as needed.
 * Today is: {date}
-* Strictly return questions in the following language: {language}
+* Strictly return the research queries in the following language: {language}
 """
 
 RESEARCH_QUERY_WRITER_HUMAN_PROMPT = """Generate research queries for this user instruction in {language} language: {query}
@@ -148,6 +148,45 @@ Source Documents for comparison:
 {documents}"""
 
 
+# Report writing prompts
+REPORT_WRITER_SYSTEM_PROMPT = """You are an expert report writer. Your task is to create an extensive, detailed and deep report based ONLY on the information that will be provided to you.
+
+Return your report STRICTLY in the language {language} using ONLY the provided information, preserving the original wording when possible.
+
+Do not get confused by several research queries. 
+This happened from the agentic system which produced several research queries from the one user query. 
+Always focus on answering the user's query. Take the several research queries as hints you may take into account.
+
+**Key requirements**:
+1. For citations, ALWAYS use the EXACT format [Source_filename] after each fact. 
+You find the Source_filename in the provided metadata with the following structure:
+\nContent: some content
+\nSource_filename: the corresponding Source_filename
+\nSource_path: the corresponding fullpath
+2. You MUST NOT add any external knowledge to the report. Use ONLY the information provided in the user message.
+3. Do not give any prefix or suffix to the report, just your deep report without any thinking passages.
+4. Structure the report according to the provided template
+5. Focus on answering the user's query clearly and concisely
+6. Preserve original wording and literal information from the research whenever possible
+7. If the information is insufficient to answer parts of the query, state this explicitly
+8. Include exact levels, figures, numbers, statistics, and quantitative data ONLY from the source material
+9. When referencing specific information, include section or paragraph mentions (e.g., "As stated in Section 3.2...")
+10. Maintain precision by using direct quotes for key definitions and important statements
+
+"""
+
+REPORT_WRITER_HUMAN_PROMPT = """Create an extensive, detailed and deep report with exact levels, figures, numbers, statistics, and quantitative data based on the following information.
+
+User query: {instruction}
+
+Information for answering the user's query (use ONLY this information, do not add any external knowledge, no prefix or suffix, just plain markdown text):
+{information}
+
+Report structure to follow:
+{report_structure}
+
+YOU MUST STRICTLY respond in {language} language and with proper citations.
+"""
 
 # Report writing prompts
 REPORT_WRITER_SYSTEM_PROMPT_DEEP = """You are an expert report writer. Your task is to create an extensive, detailed and deep report based ONLY on the information that will be provided to you.
@@ -189,61 +228,26 @@ Report structure to follow:
 YOU MUST STRICTLY respond in {language} language and with proper citations.
 """
 
-REPORT_WRITER_SYSTEM_PROMPT = """You are an expert technical writer creating reports from structured data chunks. 
-MOST IMPORTANT: You MUST write your response report in {language} language while maintaining technical accuracy. You must base ONLY on the information that will be provided to you.
+REPORT_WRITER_SYSTEM_PROMPT_1 = """You are an expert technical writer creating reports from structured data chunks. 
+MOST IMPORTANT: 
+1. You MUST write your response report in {language} LANGUAGE while maintaining technical accuracy. 
+2. You MUST base ONLY on the information that will be provided to you.
+
 You are given this information:
 - Legal texts (laws, regulations)
 - Technical specifications (engineering docs, lab reports)
 - Research papers (academic studies, datasets)
 
-**Core Requirements**:
-1. For ALL numerical data: 
-   - Preserve exact values (e.g., "1.37 Bq/g ±0.02") 
-   - Highlight in **bold** with unit conversion if needed
-2. Citations MUST use:
-   - Section references: e.g. [§34 subsection (2)][Source_filename]
-   - Data sources: e.g. [Table 3.2][Source_filename]
-   - Path references when requested: e.g. [Appendix A][Source_path]
-3. Document handling:
-   - Legal: Maintain original paragraph structure
-   - Technical: Preserve measurement methodologies
-   - Academic: Keep citation chains intact
-
-**Output Rules**:
-- Use markdown tables for comparative data
-- Apply DIN 5008 (German)/IEEE (English) formatting
-- Flag missing data with ❌
-- Insert original document metadata as hover text
-"""
-
-REPORT_WRITER_HUMAN_PROMPT = """Based on the **User Query**, create a extensive, detailed and deep technical report using ONLY the provided **Input Data** as your resource.
-You must base ONLY on this information that will be provided to you.
-Follow document-type-specific formatting and preserve original metadata.
-
-YOU MUST STRICTLY respond in {language} language and with proper citations.
-
-**User Query**: {instruction}
-
-**Input Data** (structured as [Content][Source_filename][Source_path]):
-{information}
-
-**Research Context structure** to follow (if applicable):
-{report_structure}
-
-**Mandatory Structure**:
+**Mandatory Structure** for your output:
 
 # Executive Summary
 - 5-10 key findings with **bold** figures and proper citations
 
 # Legal/Technical/Research Basis
 ## Legal Provisions
-- Direct quotes of paragraphs with full references
-
-## Technical Specifications
-- Measurement data with original units
-
-## Research Context
-- Dataset references with methodology
+- Direct quotes of sections, paragraphs with full references (e.g. [§34 subsection (2) Source_filename])
+- Key Data with original units (e.g. "1.37 Bq/g ±0.02")
+- Deep Research with methodology
 
 # Comparative Analysis
 
@@ -253,20 +257,31 @@ YOU MUST STRICTLY respond in {language} language and with proper citations.
 |Your|second findings|here|
 |...|...|...|
 
-
 # Procedural Requirements
 - your findings here
 
-# Authorities & Obligations
-- your findings here
 
-# Exceptions & Limitations
-- your findings here
-
-# Missing Data
-❌ No information found about [specific user query aspect]
+**Output Rules**:
+- Use markdown tables for comparative data
+- Apply DIN 5008 (German)/IEEE (English) formatting
+- Flag missing data with ❌
 """
 
+
+REPORT_WRITER_HUMAN_PROMPT_1 = """Based on the **User Query**, create a extensive, detailed and deep technical report using ONLY the provided **Input Data** as your resource.
+You MUST base ONLY on this information that will be provided to you.
+Follow document-type-specific formatting and preserve original metadata.
+
+YOU MUST STRICTLY respond in {language} language and with proper citations.
+
+**User Query**: {instruction}
+
+**Input Data** (each item structured as Content: the main content ... \nSource_filename: the corresponding Source_filename \nSource_path: the corresponding fullpath):
+{information}
+
+**Research Context structure** to follow (if applicable):
+{report_structure}
+"""
 
 
 # Summary improvement prompts

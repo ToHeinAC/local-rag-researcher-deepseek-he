@@ -56,9 +56,18 @@ def detect_language(state: ResearcherState, config: RunnableConfig):
         query=query
     )
     
+    # Check if report_llm is in state and use it directly if available
+    # This ensures we use the model selected in the UI
+    if "report_llm" in state:
+        model_to_use = state["report_llm"]
+        print(f"  [DEBUG] Using model from state: {model_to_use}")
+    else:
+        model_to_use = llm_model
+        print(f"  [DEBUG] Using model from config: {model_to_use}")
+        
     # Using local model with Ollama
     result = invoke_ollama(
-        model=llm_model,
+        model=model_to_use,
         system_prompt=system_prompt,
         user_prompt=human_prompt,
         output_format=DetectedLanguage
@@ -95,6 +104,7 @@ def generate_research_queries(state: ResearcherState, config: RunnableConfig):
     max_queries = config["configurable"].get("max_search_queries", 3)
     # Use the report writer LLM for generating research queries
     llm_model = config["configurable"].get("report_llm", "qwq")
+    print(f"  [DEBUG] Research Query LLM (report_llm): {llm_model}")
     
     # Get additional context if available
     additional_context = state.get("additional_context", "")
@@ -113,9 +123,18 @@ def generate_research_queries(state: ResearcherState, config: RunnableConfig):
         additional_context=f"Consider this additional context when generating queries: {additional_context}" if additional_context else ""
     )
     
+    # Check if report_llm is in state and use it directly if available
+    # This ensures we use the model selected in the UI
+    if "report_llm" in state:
+        model_to_use = state["report_llm"]
+        print(f"  [DEBUG] Using model from state: {model_to_use}")
+    else:
+        model_to_use = llm_model
+        print(f"  [DEBUG] Using model from config: {model_to_use}")
+        
     # Using local llm model with Ollama
     result = invoke_ollama(
-        model=llm_model,
+        model=model_to_use,
         system_prompt=system_prompt,
         user_prompt=human_prompt,
         output_format=Queries
@@ -320,10 +339,16 @@ def summarize_query_research(state: ResearcherState, config: RunnableConfig):
     
     # Get language and LLM model for summarization
     # Use the dedicated summarization LLM for document summarization
-    summarization_llm = config["configurable"].get("summarization_llm", "llama3.2")
+    # Check if summarization_llm is in state and use it directly if available
+    if "summarization_llm" in state:
+        summarization_llm = state["summarization_llm"]
+        print(f"  [DEBUG] Using summarization LLM from state: {summarization_llm}")
+    else:
+        summarization_llm = config["configurable"].get("summarization_llm", "llama3.2")
+        print(f"  [DEBUG] Using summarization LLM from config: {summarization_llm}")
+        
     detected_language = state.get("detected_language", config["configurable"].get("detected_language", "English"))
     print(f"  [Using language: {detected_language}]")
-    print(f"  [Using summarization LLM: {summarization_llm}]")
     
     # Format the system prompt for summarization
     system_prompt = SUMMARIZER_SYSTEM_PROMPT.format(
@@ -469,7 +494,7 @@ def generate_final_answer(state: ResearcherState, config: RunnableConfig):
     print(f"  [DEBUG] Current state keys: {list(state.keys())}")
     # Use the report writing LLM model for generating the final answer
     report_llm = config["configurable"].get("report_llm", "qwq")
-    
+    print(f"  [DEBUG] Report LLM (report_llm): {report_llm}")
     # Get detected language
     detected_language = state.get("detected_language", "English")
     
@@ -496,6 +521,9 @@ def generate_final_answer(state: ResearcherState, config: RunnableConfig):
         total_documents = sum(len(docs) for docs in search_summaries.values())
         print(f"  [DEBUG] Total documents across all summaries: {total_documents}")
     
+    # Initialize citation sources list
+    citation_sources = []
+    
     # Process and format the accumulated summaries
     if not search_summaries:
         information = "No search summaries were found. Please try again with a different query."
@@ -521,13 +549,29 @@ def generate_final_answer(state: ResearcherState, config: RunnableConfig):
         for i, (query, _) in enumerate(sorted_queries):
             docs = search_summaries[query]
             
-            # Combine all document content for this query
-            content = "\n".join([doc.page_content for doc in docs])
+            # Collect citation sources from document metadata
+            for doc in docs:
+                if 'name' in doc.metadata and doc.metadata['name']:
+                    # If name is a list, extend citation_sources with all items
+                    if isinstance(doc.metadata['name'], list):
+                        citation_sources.extend(doc.metadata['name'])
+                    else:
+                        citation_sources.append(doc.metadata['name'])
             
-            formatted_content = parse_document_to_formatted_content(content)
-
+            # Format each document with content and source
+            formatted_docs = []
+            for doc in docs:
+                source_name = ""
+                if 'name' in doc.metadata:
+                    if isinstance(doc.metadata['name'], list) and doc.metadata['name']:
+                        source_name = doc.metadata['name'][0]  # Take the first name if it's a list
+                    elif isinstance(doc.metadata['name'], str):
+                        source_name = doc.metadata['name']
+                
+                formatted_docs.append(f"Content: {doc.page_content}\nSource: {source_name}")
+            
             # Add formatted content with query and summary
-            formatted_info.append(f"{formatted_content}\n\n")
+            formatted_info.append(f"## {query}\n{chr(10).join(formatted_docs)}\n\n")
         
         # Join all formatted summaries
         information = "\n\n".join(formatted_info)
@@ -544,6 +588,8 @@ def generate_final_answer(state: ResearcherState, config: RunnableConfig):
                     if isinstance(summary, dict) and "content" in summary:
                         query = summary.get("query", f"Research Query {i+1}")
                         content = summary.get("content", "")
+                        if "metadata" in summary and "name" in summary["metadata"]:
+                            citation_sources.append(summary["metadata"]["name"])
                     elif isinstance(summary, str):
                         query = research_queries[i] if i < len(research_queries) else f"Research Query {i+1}"
                         content = summary
@@ -552,6 +598,8 @@ def generate_final_answer(state: ResearcherState, config: RunnableConfig):
                         try:
                             query = research_queries[i] if i < len(research_queries) else f"Research Query {i+1}"
                             content = getattr(summary, "page_content", str(summary))
+                            if hasattr(summary, "metadata") and "name" in summary.metadata:
+                                citation_sources.append(summary.metadata["name"])
                         except:
                             query = f"Research Query {i+1}"
                             content = str(summary)
@@ -586,9 +634,18 @@ def generate_final_answer(state: ResearcherState, config: RunnableConfig):
         language=detected_language
     )
     
+    # Check if report_llm is in state and use it directly if available
+    # This ensures we use the model selected in the UI
+    if "report_llm" in state:
+        model_to_use = state["report_llm"]
+        print(f"  [DEBUG] Using model from state for final answer: {model_to_use}")
+    else:
+        model_to_use = report_llm
+        print(f"  [DEBUG] Using model from config for final answer: {model_to_use}")
+        
     # Call the LLM with the prompt to generate the final answer
     final_answer = invoke_ollama(
-        model=report_llm,
+        model=model_to_use,
         system_prompt=system_prompt,
         user_prompt=human_prompt
     )
@@ -634,6 +691,24 @@ def generate_final_answer(state: ResearcherState, config: RunnableConfig):
         report_content = report_content.strip()
         
         print(f"  [INFO] Ensured report content is clean markdown for display: {report_content[:100]}...")
+    
+    # Count citation sources and sort by frequency (most common first)
+    citation_count = {}
+    for source in citation_sources:
+        if source in citation_count:
+            citation_count[source] += 1
+        else:
+            citation_count[source] = 1
+    
+    # Sort sources by frequency (most common first)
+    sorted_sources = sorted(citation_count.items(), key=lambda x: x[1], reverse=True)
+    unique_sources = [source for source, _ in sorted_sources]
+    
+    # Add citation sources to the final answer
+    if unique_sources:
+        source_str = "## Sources:\n" + "\n".join([f"['{source}']" for source in unique_sources])
+        report_content = report_content + "\n\n" + source_str
+        print(f"  [INFO] Added citation sources to final answer: {source_str}")
     
     # Set the final_answer in the state and return it with the node name
     # This ensures both the state is updated and the UI can access it
@@ -698,6 +773,11 @@ researcher_graph.add_edge("generate_final_answer", END)
 
 # Compile the researcher graph
 researcher = researcher_graph.compile()
+
+#plot the researcher graph
+current_dir = os.path.dirname(os.path.abspath(__file__))
+graph_img_path = os.path.join(current_dir, "mermaid_researcher_graph.png")
+researcher.get_graph().draw_mermaid_png(output_file_path=graph_img_path)
 
 # Make sure researcher_graph is exported
 __all__ = ["researcher", "researcher_graph"]
