@@ -404,6 +404,29 @@ def generate_response(user_input, enable_web_search, report_structure, max_searc
         # This ensures the language is detected from the user's query
     }}
 
+    # Print debug information about all user settings at the beginning of the workflow
+    print(
+        f"\n{'='*80}\n" 
+        f"WORKFLOW INITIALIZATION - USER SETTINGS DEBUG\n"
+        f"{'='*80}\n"
+        f"User Query: {user_input}\n"
+        f"Web Search Enabled: {enable_web_search}\n"
+        f"Report Structure: {report_structure}\n"
+        f"Max Search Queries: {max_search_queries}\n"
+        f"Report LLM (initial_state): {initial_state['report_llm']}\n"
+        f"Report LLM (config): {config['configurable']['report_llm']}\n"
+        f"Report LLM (session_state): {st.session_state.report_llm}\n"
+        f"Summarization LLM (initial_state): {initial_state['summarization_llm']}\n"
+        f"Summarization LLM (config): {config['configurable']['summarization_llm']}\n"
+        f"Summarization LLM (session_state): {st.session_state.summarization_llm}\n"
+        f"Quality Checker Enabled: {enable_quality_checker}\n"
+        f"Quality Check Loops: {quality_check_loops}\n"
+        f"External Database Used: {use_ext_database}\n"
+        f"Selected Database: {selected_database if selected_database else 'None'}\n"
+        f"Results per Query (k_results): {k_results}\n"
+        f"{'='*80}\n"
+    )
+    
     # Start timing the workflow
     start_time = time.time()
     

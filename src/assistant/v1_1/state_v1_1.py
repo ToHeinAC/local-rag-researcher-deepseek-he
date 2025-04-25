@@ -13,4 +13,8 @@ class ResearcherState(TypedDict):
     search_summaries: dict[str, list[Document]]
     final_answer: str
     additional_context: Optional[list[Document]]  # Added field to store additional context from document retrieval
-
+    # Persist user-selected LLM models throughout the graph workflow
+    report_llm: str  # LLM model used for report writing
+    summarization_llm: str  # LLM model used for document summarization
+    # For handling duplicate research queries
+    query_mapping: Optional[dict[str, str]]  # Maps indexed queries to original queries
