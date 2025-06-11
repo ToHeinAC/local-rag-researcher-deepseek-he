@@ -34,7 +34,7 @@ tab1, tab2, tab3 = st.tabs(["Step 1: Choose Embedding Model", "Step 2: Create Em
 
 # Global variables to store selections
 if 'embedding_model' not in st.session_state:
-    st.session_state.embedding_model = "sentence-transformers/all-mpnet-base-v2"
+    st.session_state.embedding_model = "Qwen/Qwen3-Embedding-0.6B"
 if 'chunk_size' not in st.session_state:
     st.session_state.chunk_size = 2000
 if 'chunk_overlap' not in st.session_state:
@@ -162,6 +162,7 @@ with tab1:
     st.header("Select Embedding Model")
     
     embedding_options = [
+        "Qwen/Qwen3-Embedding-0.6B",
         "sentence-transformers/all-mpnet-base-v2",
         "jinaai/jina-embeddings-v2-base-de",
         "sentence-transformers/all-MiniLM-L6-v2",
@@ -281,6 +282,7 @@ with tab3:
         "qwq",
         "gemma3:27b",
         "llama3.3",
+        "llama4:latest",
         "mistral-small",
         "mistral-nemo"
     ]
