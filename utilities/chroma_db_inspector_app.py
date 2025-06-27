@@ -56,18 +56,44 @@ def list_embedding_models(database_path):
     return embedding_models
 
 def list_tenant_dirs(db_path):
-    """List all tenant directories in the database path"""
+    """List all tenant directories in the database path that contain valid Chroma collections"""
     tenant_dirs = []
     if os.path.exists(db_path):
         for item in os.listdir(db_path):
             item_path = os.path.join(db_path, item)
             if os.path.isdir(item_path):
-                # Check if this might be a date directory like '2025-04-22_15-41-10'
-                if re.match(r'\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}', item):
+                # Check if this directory contains a Chroma collection
+                # A valid tenant directory should contain either:
+                # 1. A chroma.sqlite3 file (Chroma DB file)
+                # 2. A 'chroma' subdirectory
+                # 3. A collection directory with Chroma files
+                
+                # Check for chroma.sqlite3
+                if os.path.exists(os.path.join(item_path, 'chroma.sqlite3')):
                     tenant_dirs.append(item)
-                # Regular tenant directory
-                else:
+                    continue
+                
+                # Check for 'chroma' subdirectory
+                if os.path.exists(os.path.join(item_path, 'chroma')) and os.path.isdir(os.path.join(item_path, 'chroma')):
                     tenant_dirs.append(item)
+                    continue
+                
+                # Check if there are any subdirectories that might be collection directories
+                # (containing typical Chroma files like data_level0.bin, header.bin, etc.)
+                has_collection = False
+                for subitem in os.listdir(item_path):
+                    subitem_path = os.path.join(item_path, subitem)
+                    if os.path.isdir(subitem_path):
+                        # Check for typical Chroma collection files
+                        if (os.path.exists(os.path.join(subitem_path, 'data_level0.bin')) or
+                            os.path.exists(os.path.join(subitem_path, 'header.bin')) or
+                            os.path.exists(os.path.join(subitem_path, 'index_metadata.pickle'))):
+                            has_collection = True
+                            break
+                
+                if has_collection:
+                    tenant_dirs.append(item)
+    
     return tenant_dirs
 
 def extract_embedding_model(db_dir_name):
@@ -92,10 +118,7 @@ def get_collections_with_doc_counts(db_path):
     collections_with_counts = []
     collection_name_prefix = "collection_"  # Common prefix in ChromaDB
     try:
-        # Try multiple approaches to find all collections
-        all_collections = set()
-        
-        # Method 1: Create a Chroma client and use the API
+        # Create a Chroma client and use the API
         client = PersistentClient(path=db_path)
         
         # Look for the chroma subdirectory, which is often where collections are stored
@@ -103,75 +126,82 @@ def get_collections_with_doc_counts(db_path):
         check_path = chroma_dir if os.path.exists(chroma_dir) else db_path
         st.write(f"Checking for collections in: {check_path}")
         
-        # Method 2: List collections from directory structure
-        try:
-            # Check for collection directories
-            for item in os.listdir(check_path):
-                item_path = os.path.join(check_path, item)
-                if os.path.isdir(item_path) and not item.startswith('.'):
-                    # Add both with and without the collection_ prefix
-                    # as we don't know which format is used in this system
-                    all_collections.add(item)
-                    if not item.startswith(collection_name_prefix):
-                        all_collections.add(f"{collection_name_prefix}{item}")
-                    else:
-                        # Also add without prefix in case it's referenced that way
-                        all_collections.add(item[len(collection_name_prefix):])
-        except Exception as dir_error:
-            st.error(f"Error listing directories: {str(dir_error)}")
+        # Track collections we've already processed to avoid duplicates
+        processed_collections = set()
         
-        # Method 3: Use Chroma API to list collections
+        # Use Chroma API to list collections - this is the most reliable method
         try:
             api_collections = client.list_collections()
-            for name in api_collections:
-                all_collections.add(name)
-                # Also add with prefix if it doesn't have it
-                if not name.startswith(collection_name_prefix):
-                    all_collections.add(f"{collection_name_prefix}{name}")
-                else:
-                    # Also add without prefix
-                    all_collections.add(name[len(collection_name_prefix):])
-        except Exception as api_error:
-            st.error(f"Error listing collections via API: {str(api_error)}")
-        
-        # Show all found collections
-        st.write(f"Found {len(all_collections)} potential collections: {list(all_collections)}")
-        
-        # For each collection, try to access it and get document count
-        for name in all_collections:
-            try:
-                # Try to get the collection - try both with and without prefix
-                collection = None
-                try:
-                    collection = client.get_collection(name)
-                except:
-                    # If that failed, try with the collection_ prefix
-                    if not name.startswith(collection_name_prefix):
-                        try:
-                            collection = client.get_collection(f"{collection_name_prefix}{name}")
-                            name = f"{collection_name_prefix}{name}"  # Update name if this worked
-                        except:
-                            pass
-                    else:
-                        # Try without the prefix
-                        try:
-                            collection = client.get_collection(name[len(collection_name_prefix):])
-                            name = name[len(collection_name_prefix):]  # Update name if this worked
-                        except:
-                            pass
+            st.write(f"API found {len(api_collections)} collections: {api_collections}")
+            
+            # Process each collection from the API
+            for collection_name in api_collections:
+                # Skip if we've already processed this collection (normalized name)
+                normalized_name = collection_name
+                if normalized_name in processed_collections:
+                    continue
                 
-                if collection:
-                    # Successfully got a collection, get the document count
+                # Mark as processed
+                processed_collections.add(normalized_name)
+                
+                try:
+                    # Get the collection
+                    collection = client.get_collection(collection_name)
                     doc_count = collection.count()
                     
-                    # Include all collections, even those with zero documents
+                    # Add to our results
                     collections_with_counts.append({
-                        "name": name,
+                        "name": collection_name,
                         "count": doc_count
                     })
-                    st.write(f"Collection '{name}' has {doc_count} documents")
-            except Exception as collection_error:
-                st.error(f"Error accessing collection '{name}': {str(collection_error)}")
+                    st.write(f"Collection '{collection_name}' has {doc_count} documents")
+                except Exception as collection_error:
+                    st.error(f"Error accessing collection '{collection_name}': {str(collection_error)}")
+        except Exception as api_error:
+            st.error(f"Error listing collections via API: {str(api_error)}")
+            
+            # Fallback: try to find collections from directory structure
+            try:
+                for item in os.listdir(check_path):
+                    item_path = os.path.join(check_path, item)
+                    if os.path.isdir(item_path) and not item.startswith('.'):
+                        # Try with and without prefix
+                        collection_names_to_try = [item]
+                        if item.startswith(collection_name_prefix):
+                            # Also try without prefix
+                            collection_names_to_try.append(item[len(collection_name_prefix):])
+                        else:
+                            # Also try with prefix
+                            collection_names_to_try.append(f"{collection_name_prefix}{item}")
+                        
+                        # Try each possible name
+                        for name_to_try in collection_names_to_try:
+                            # Skip if we've already processed this collection
+                            if name_to_try in processed_collections:
+                                continue
+                                
+                            try:
+                                collection = client.get_collection(name_to_try)
+                                # If we get here, the collection exists
+                                doc_count = collection.count()
+                                
+                                # Mark as processed
+                                processed_collections.add(name_to_try)
+                                
+                                # Add to our results
+                                collections_with_counts.append({
+                                    "name": name_to_try,
+                                    "count": doc_count
+                                })
+                                st.write(f"Collection '{name_to_try}' has {doc_count} documents")
+                                
+                                # We found a working name, no need to try others
+                                break
+                            except:
+                                # This name didn't work, try the next one
+                                pass
+            except Exception as dir_error:
+                st.error(f"Error listing directories: {str(dir_error)}")
         
         # Sort collections by count (descending) then by name
         collections_with_counts = sorted(collections_with_counts, key=lambda x: (-x["count"], x["name"]))

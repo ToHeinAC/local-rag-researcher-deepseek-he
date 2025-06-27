@@ -93,6 +93,28 @@ def get_embedding_model(model_name):
             encode_kwargs={'normalize_embeddings': True}
         )
 
+# Function to get file save date from filesystem
+def get_file_save_date(file_path):
+    """Get file save date from filesystem in YYMMDD format
+    
+    Args:
+        file_path (str): The file path
+        
+    Returns:
+        str: The file save date in YYMMDD format
+    """
+    try:
+        # Get file creation time
+        ctime = os.path.getctime(file_path)
+        # Convert to datetime
+        dt = datetime.fromtimestamp(ctime)
+        # Format as YYMMDD
+        return dt.strftime('%y%m%d')
+    except Exception as e:
+        print(f"Error getting file save date: {str(e)}")
+        # Return current date as fallback
+        return datetime.now().strftime('%y%m%d')
+
 # Function to get all documents in a vector database
 def get_all_documents_in_vectordb(tenant_id, embed_llm, persist_directory):
     """Retrieve all document filenames from a vector database for a specific tenant
@@ -196,11 +218,12 @@ def generate_metadata_from_file(filename):
 
 # Function to check if a file is already in the database
 def is_file_in_database(filename, date_str, tenant_id, embed_llm, persist_directory):
-    """Check if a file with the same metadata is already in the database
+    """
+    Check if a file with the same metadata is already in the database
     
     Args:
         filename (str): The filename
-        date_str (str): The date string in YYMMDD format
+        date_str (str): The file save date string in YYMMDD format
         tenant_id (str): The tenant ID
         embed_llm: The embedding model
         persist_directory (str): The directory where the vector database is stored
@@ -208,14 +231,53 @@ def is_file_in_database(filename, date_str, tenant_id, embed_llm, persist_direct
     Returns:
         bool: True if the file is already in the database, False otherwise
     """
-    # Get all documents in the database
-    all_docs = get_all_documents_in_vectordb(tenant_id, embed_llm, persist_directory)
-    
-    # Create metadata string to check
-    metadata_str = f"{filename}--{date_str}"
-    
-    # Check if the metadata string is in any of the document filenames
-    return any(metadata_str in doc for doc in all_docs)
+    try:
+        # Extract original filename if it contains a date
+        original_filename = filename
+        if "--" in filename:
+            parts = filename.split("--")
+            if len(parts) >= 2:
+                original_filename = parts[0]
+        
+        # Get all documents in the database
+        all_docs = get_all_documents_in_vectordb(tenant_id, embed_llm, persist_directory)
+        
+        # Generate metadata string to check against source field
+        metadata = f"{original_filename}--{date_str}"
+        
+        # Check if the file is already in the database by source field
+        if metadata in all_docs:
+            return True
+            
+        # Also check the vectorstore metadata for original_filename and file_save_date
+        try:
+            tenant_vdb_dir = os.path.join(persist_directory, tenant_id)
+            collection_name = get_tenant_collection_name(tenant_id)
+            vectorstore = Chroma(
+                persist_directory=tenant_vdb_dir,
+                collection_name=collection_name,
+                embedding_function=embed_llm
+            )
+            
+            # Get all metadata
+            result = vectorstore.get()
+            if 'metadatas' in result and result['metadatas']:
+                for metadata in result['metadatas']:
+                    if metadata and 'original_filename' in metadata and 'file_save_date' in metadata:
+                        # Check if both original filename and file save date match
+                        if metadata['original_filename'] == original_filename and metadata['file_save_date'] == date_str:
+                            return True
+            
+            # Clean up
+            vectorstore._client = None
+            del vectorstore
+        except Exception as e:
+            print(f"Error checking vectorstore metadata: {str(e)}")
+        
+        return False
+    except Exception as e:
+        print(f"Error checking if file is in database: {str(e)}")
+        return False
 
 # Function to check if a file is already in the db_inserted folder
 def is_file_in_inserted_folder(filename, date_str):
@@ -223,13 +285,29 @@ def is_file_in_inserted_folder(filename, date_str):
     
     Args:
         filename (str): The filename
-        date_str (str): The date string in YYMMDD format (not used for checking)
+        date_str (str): The file save date string in YYMMDD format
         
     Returns:
         bool: True if the file is already in the db_inserted folder, False otherwise
     """
-    # Check if the file exists in the db_inserted folder with its original name
-    return filename in os.listdir(DB_INSERTED_PATH)
+    # Check if the db_inserted folder exists
+    if not os.path.exists(DB_INSERTED_PATH):
+        os.makedirs(DB_INSERTED_PATH, exist_ok=True)
+        return False
+    
+    # Extract original filename if it contains a date
+    original_filename = filename
+    if "--" in filename:
+        parts = filename.split("--")
+        if len(parts) >= 2:
+            original_filename = parts[0]
+    
+    # Get all files in the db_inserted folder
+    inserted_files = os.listdir(DB_INSERTED_PATH)
+    
+    # Check if the original filename is already in the db_inserted folder
+    # We check for the original filename since files are stored with their original names
+    return original_filename in inserted_files
 
 # Function to copy file to db_inserted folder with original filename
 def copy_file_to_inserted(source_path, filename, date_str):
@@ -237,19 +315,29 @@ def copy_file_to_inserted(source_path, filename, date_str):
     
     Args:
         source_path (str): The source file path
-        filename (str): The filename
-        date_str (str): The date string in YYMMDD format (not used in filename)
+        filename (str): The filename (can be original or with date)
+        date_str (str): The insertion date string in YYMMDD format (not used in filename)
         
     Returns:
         str: The path to the copied file
     """
-    # Create destination path with original filename
-    dest_path = os.path.join(DB_INSERTED_PATH, filename)
+    # Create the db_inserted folder if it doesn't exist
+    os.makedirs(DB_INSERTED_PATH, exist_ok=True)
     
-    # Copy file
-    shutil.copy2(source_path, dest_path)
+    # Extract original filename if it contains a date
+    original_filename = filename
+    if "--" in filename:
+        parts = filename.split("--")
+        if len(parts) >= 2:
+            original_filename = parts[0]
     
-    return dest_path
+    # Copy the file to the db_inserted folder with its original filename
+    target_path = os.path.join(DB_INSERTED_PATH, original_filename)
+    shutil.copy2(source_path, target_path)
+    
+    st.info(f"Copied file to {target_path} using original filename {original_filename}")
+    
+    return target_path
 
 # Create tabs for the different steps
 tab1, tab2, tab3 = st.tabs(["Step 1: Select/Create Database", "Step 2: Insert Documents", "Step 3: View Database"])
@@ -384,12 +472,25 @@ with tab2:
             
             for filename in insert_files:
                 file_path = os.path.join(DEFAULT_DATA_FOLDER, filename)
-                metadata = f"{filename}--{current_date}"
+                
+                # Get file save date from filesystem
+                file_save_date = get_file_save_date(file_path)
+                st.info(f"File: {filename} - Filesystem save date: {file_save_date}")
+                
+                # Extract original filename if it contains a date
+                original_filename = filename
+                if "--" in filename:
+                    parts = filename.split("--")
+                    if len(parts) >= 2:
+                        original_filename = parts[0]
+                
+                # Use the filesystem file save date for metadata
+                metadata = f"{original_filename}--{file_save_date}"
                 
                 # Check if file is already in database or inserted folder
                 embed_model = get_embedding_model(st.session_state.embedding_model)
-                is_in_db = is_file_in_database(filename, current_date, st.session_state.tenant_id, embed_model, st.session_state.vdb_dir)
-                is_in_inserted = is_file_in_inserted_folder(filename, current_date)
+                is_in_db = is_file_in_database(filename, file_save_date, st.session_state.tenant_id, embed_model, st.session_state.vdb_dir)
+                is_in_inserted = is_file_in_inserted_folder(filename, file_save_date)
                 
                 file_data.append({
                     "filename": filename,
@@ -419,137 +520,107 @@ with tab2:
                                 # Create embeddings
                                 file_path = os.path.join(DEFAULT_DATA_FOLDER, filename)
                                 
+                                # Get file save date from filesystem
+                                original_filename = filename
+                                
+                                # Extract original filename if it contains a date
+                                if "--" in filename:
+                                    parts = filename.split("--")
+                                    if len(parts) >= 2:
+                                        original_filename = parts[0]
+                                
+                                # Get file save date from filesystem
+                                file_save_date = get_file_save_date(file_path)
+                                st.info(f"Using file save date from filesystem: {file_save_date} for {filename}")
+                                
+                                # Get current date for insertion date
+                                insertion_date = datetime.now().strftime('%y%m%d')
+                                st.info(f"Using insertion date: {insertion_date} (current date)")
+                                
+                                # Display both dates for clarity
+                                st.info(f"File metadata: Original filename: {original_filename}, File save date: {file_save_date}, Insertion date: {insertion_date}")
+                                
                                 # Create a temporary folder with just this file
                                 temp_folder = os.path.join(DEFAULT_DATA_FOLDER, "temp_embed")
                                 os.makedirs(temp_folder, exist_ok=True)
                                 temp_file_path = os.path.join(temp_folder, filename)
                                 shutil.copy2(file_path, temp_file_path)
                                 
-                                # Create a custom load_embed function to add additional metadata
-                                def custom_load_embed(folder, vdbdir, embed_llm, c_size, c_overlap, tenant_id, insertion_date):
-                                    # Import clear_cuda_memory here to avoid circular imports
-                                    from src.assistant.utils import clear_cuda_memory
+                                # Process the file directly instead of using a nested function
+                                try:
+                                    # Get the file extension
+                                    file_ext = os.path.splitext(file_path)[1].lower()
                                     
-                                    # Clear CUDA memory before starting embedding process
-                                    clear_cuda_memory()
-                                    
-                                    dirname = vdbdir
-                                    # Now load and embed
-                                    print(f"Step: Check for new data and embed new data to new vector DB '{dirname}'")
-                                    # Load documents from the specified directory
-                                    directory = folder
-                                    documents = []
-                                    for filename in os.listdir(directory):
-                                        # Extract file save date from filename if it exists (format: filename--YYMMDD)
-                                        original_filename = filename
-                                        file_save_date = ""
+                                    # Process the file based on its type
+                                    if file_ext == ".pdf":
+                                        # Extract text from PDF
+                                        text = extract_text_from_pdf(file_path)
                                         
-                                        # Check if the filename contains a date in the format filename--YYMMDD
-                                        if "--" in filename:
-                                            parts = filename.split("--")
-                                            if len(parts) >= 2 and len(parts[1]) == 6 and parts[1].isdigit():
-                                                original_filename = parts[0]
-                                                file_save_date = parts[1]
+                                        # Create a document
+                                        document = Document(
+                                            page_content=text,
+                                            metadata={
+                                                "source": f"{original_filename}--{file_save_date}",
+                                                "path": file_path,
+                                                "original_filename": original_filename,
+                                                "file_save_date": file_save_date,
+                                                "insertion_date": insertion_date
+                                            }
+                                        )
                                         
-                                        if filename.endswith('.pdf'):
-                                            pdf_path = os.path.join(directory, filename)
-                                            text = extract_text_from_pdf(pdf_path)
-                                            documents.append(Document(
-                                                page_content=text, 
-                                                metadata={
-                                                    'source': filename,  # Keep the full original filename as source
-                                                    'path': pdf_path,
-                                                    'original_filename': original_filename,
-                                                    'file_save_date': file_save_date,
-                                                    'insertion_date': insertion_date
-                                                }
-                                            ))
-                                        else:
-                                            loader = DirectoryLoader(directory, exclude="**/*.pdf")
-                                            loaded = loader.load()
-                                            if loaded:
-                                                # Add full path and dates to metadata
-                                                for doc in loaded:
-                                                    if 'source' in doc.metadata:
-                                                        doc.metadata['path'] = os.path.join(directory, doc.metadata['source'])
-                                                        doc.metadata['original_filename'] = original_filename
-                                                        doc.metadata['file_save_date'] = file_save_date
-                                                        doc.metadata['insertion_date'] = insertion_date
-                                                documents.extend(loaded)
-                                    
-                                    docslen = len(documents)
-                                    
-                                    vectorstore = get_tenant_vectorstore(tenant_id, embed_llm, persist_directory=dirname, similarity="cosine", normal=True)
-                                    print(f"Collection name: {vectorstore._collection.name}")
-                                    print(f"Collection count before adding: {vectorstore._collection.count()}")
-                                    
-                                    # Split the documents into chunks
-                                    text_splitter = RecursiveCharacterTextSplitter(chunk_size=c_size, chunk_overlap=c_overlap)
-                                    chunks = []
-                                    for document in documents:
-                                        doc_chunks = text_splitter.create_documents([document.page_content])
+                                        # Log metadata for debugging
+                                        st.info(f"Document metadata: {document.metadata}")
+                                        
+                                        # Create text splitter
+                                        text_splitter = RecursiveCharacterTextSplitter(
+                                            chunk_size=st.session_state.chunk_size,
+                                            chunk_overlap=st.session_state.chunk_overlap,
+                                            separators=["\n\n", "\n", ".", " ", ""]
+                                        )
+                                        
+                                        # Split document into chunks
+                                        doc_chunks = text_splitter.split_documents([document])
+                                        
+                                        # Add metadata to chunks
+                                        chunks = []
                                         for chunk in doc_chunks:
                                             chunk.metadata['source'] = document.metadata['source']
                                             chunk.metadata['page'] = document.metadata.get('page', 0)
                                             chunk.metadata['path'] = document.metadata.get('path', '')
-                                            chunk.metadata['save_date'] = document.metadata.get('save_date', '')
+                                            chunk.metadata['original_filename'] = document.metadata.get('original_filename', '')
+                                            chunk.metadata['file_save_date'] = document.metadata.get('file_save_date', '')
                                             chunk.metadata['insertion_date'] = document.metadata.get('insertion_date', '')
-                                        chunks.extend(doc_chunks)
-
-                                    # Calculate human-readable chunk IDs
-                                    chunks = calculate_chunk_ids(chunks)
-
-                                    # Extract vector IDs from chunks
-                                    vector_ids = [chunk.metadata['id'] for chunk in chunks]
-
-                                    # Check for existing vector IDs in the database
-                                    existing_ids = vectorstore.get()['ids']
-
-                                    # Filter out chunks that are already in the database
-                                    new_chunks = [chunk for chunk, vector_id in zip(chunks, vector_ids) if vector_id not in existing_ids]
-                                    new_vector_ids = [vector_id for vector_id in vector_ids if vector_id not in existing_ids]
-
-                                    newchunkslen = len(new_chunks)
-
-                                    if new_chunks:
-                                        # Clear CUDA memory before adding documents
-                                        clear_cuda_memory()
+                                            chunks.append(chunk)
                                         
-                                        # Add the new chunks to the vector store with their embeddings
-                                        vectorstore.add_documents(new_chunks, ids=new_vector_ids)
-                                        print(f"Collection count after adding: {vectorstore._collection.count()}")
-                                        vectorstore.persist()
-                                        print(f"#{docslen} files embedded via #{newchunkslen} chunks in vector database.")
+                                        # Log number of chunks created
+                                        st.info(f"Created {len(chunks)} chunks with file save date: {file_save_date} and insertion date: {insertion_date}")
                                         
-                                        # Clear CUDA memory after adding documents
-                                        clear_cuda_memory()
+                                        # Calculate human-readable chunk IDs
+                                        chunks = calculate_chunk_ids(chunks)
+                                        
+                                        # Get tenant vectorstore
+                                        tenant_vdb_dir = os.path.join(st.session_state.vdb_dir, st.session_state.tenant_id)
+                                        collection_name = get_tenant_collection_name(st.session_state.tenant_id)
+                                        vectorstore = Chroma(
+                                            persist_directory=tenant_vdb_dir,
+                                            collection_name=collection_name,
+                                            embedding_function=embed_model
+                                        )
+                                        
+                                        # Add documents to vectorstore
+                                        vectorstore.add_documents(chunks)
+                                        
+                                        # Copy file to db_inserted folder using original filename
+                                        copy_file_to_inserted(file_path, original_filename, insertion_date)
+                                        
+                                        st.success(f"Successfully processed {filename} with {len(chunks)} chunks and file save date {file_save_date}")
                                     else:
-                                        # Already existing
-                                        print(f"Chunks already available, no new chunks added to vector database.")
-
-                                    return dirname, tenant_id
-                                
-                                # Get current date for insertion date
-                                insertion_date = datetime.now().strftime('%y%m%d')
-                                
-                                # Load and embed with custom metadata
-                                dirname, tenant_id = custom_load_embed(
-                                    folder=temp_folder,
-                                    vdbdir=st.session_state.vdb_dir,
-                                    embed_llm=embed_model,
-                                    c_size=st.session_state.chunk_size,
-                                    c_overlap=st.session_state.chunk_overlap,
-                                    tenant_id=st.session_state.tenant_id,
-                                    insertion_date=insertion_date
-                                )
-                                
-                                # Copy file to db_inserted folder
-                                copy_file_to_inserted(file_path, filename, current_date)
-                                
-                                # Clean up temp folder
-                                shutil.rmtree(temp_folder, ignore_errors=True)
-                                
-                                st.success(f"Successfully processed {filename}")
+                                        st.error(f"Unsupported file type: {file_ext}")
+                                except Exception as e:
+                                    st.error(f"Error processing {filename}: {str(e)}")
+                                finally:
+                                    # Clean up temp folder
+                                    shutil.rmtree(temp_folder, ignore_errors=True)
                             except Exception as e:
                                 st.error(f"Error processing {filename}: {str(e)}")
                         else:
@@ -605,10 +676,12 @@ with tab3:
                                     # Get original_filename from metadata if available
                                     if 'original_filename' in metadata and metadata['original_filename']:
                                         original_filename = metadata['original_filename']
+                                        st.info(f"Found original filename in metadata: {original_filename}")
                                     
                                     # Get file_save_date from metadata if available
                                     if 'file_save_date' in metadata and metadata['file_save_date']:
                                         file_save_date_raw = metadata['file_save_date']
+                                        st.info(f"Found file save date in metadata: {file_save_date_raw}")
                                         # Format the date as YY-MM-DD if it's in YYMMDD format
                                         if len(file_save_date_raw) == 6 and file_save_date_raw.isdigit():
                                             file_save_date = f"{file_save_date_raw[:2]}-{file_save_date_raw[2:4]}-{file_save_date_raw[4:]}"
@@ -618,6 +691,7 @@ with tab3:
                                     # Get insertion_date from metadata if available
                                     if 'insertion_date' in metadata and metadata['insertion_date']:
                                         insertion_date_raw = metadata['insertion_date']
+                                        st.info(f"Found insertion date in metadata: {insertion_date_raw}")
                                         # Format the date as YY-MM-DD if it's in YYMMDD format
                                         if len(insertion_date_raw) == 6 and insertion_date_raw.isdigit():
                                             insertion_date = f"{insertion_date_raw[:2]}-{insertion_date_raw[2:4]}-{insertion_date_raw[4:]}"
