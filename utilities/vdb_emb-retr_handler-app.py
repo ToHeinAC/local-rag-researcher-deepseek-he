@@ -7,6 +7,10 @@ import pandas as pd
 from pathlib import Path
 import re
 from datetime import datetime
+import torch
+
+# Set PyTorch CUDA memory allocation configuration to mitigate fragmentation
+os.environ['PYTORCH_CUDA_ALLOC_CONF'] = 'expandable_segments:True'
 
 # Add the parent directory to the path to import from src
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
@@ -21,23 +25,93 @@ from src.assistant.rag_helpers import (
     source_summarizer_ollama,
     similarity_search_for_tenant
 )
-from langchain_community.embeddings import HuggingFaceEmbeddings
+from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_community.vectorstores import Chroma
 from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain.document_loaders import DirectoryLoader
-from langchain.schema import Document
+from langchain_community.document_loaders import DirectoryLoader
+from langchain_core.documents import Document
 from src.assistant.prompts import SUMMARIZER_SYSTEM_PROMPT
 
-# Set page config
+# Set page configuration
 st.set_page_config(
     page_title="Vector Database Handler",
-    page_icon="🗃️",
+    page_icon="🧠",
     layout="wide"
 )
 
+# CUDA memory clearing will be done via GUI button
+
+# Set up session state variables
+if 'llm_model' not in st.session_state:
+    st.session_state.llm_model = "gpt-4o"
+    
+# Add CUDA memory status to session state
+if 'cuda_memory_cleared' not in st.session_state:
+    st.session_state.cuda_memory_cleared = False
+if 'embedding_model' not in st.session_state:
+    st.session_state.embedding_model = "jinaai/jina-embeddings-v2-base-en"
+if 'selected_database' not in st.session_state:
+    st.session_state.selected_database = ""
+if 'tenant_id' not in st.session_state:
+    st.session_state.tenant_id = "default"
+if 'vdb_dir' not in st.session_state:
+    st.session_state.vdb_dir = ""
+if 'gpu_device' not in st.session_state:
+    st.session_state.gpu_device = "cuda" if torch.cuda.is_available() else "cpu"
+if 'use_gpu' not in st.session_state:
+    st.session_state.use_gpu = torch.cuda.is_available()
+if 'use_fp16' not in st.session_state:
+    st.session_state.use_fp16 = st.session_state.use_gpu
+if 'force_cpu_large_docs' not in st.session_state:
+    st.session_state.force_cpu_large_docs = False
+if 'chunk_size' not in st.session_state:
+    st.session_state.chunk_size = 2000
+if 'chunk_overlap' not in st.session_state:
+    st.session_state.chunk_overlap = 400
+
 # Title and description
 st.title("Vector Database Handler App")
-st.markdown("This app allows you to select or create vector databases and insert new documents with proper metadata tracking.")
+st.markdown("Use this app to manage your vector databases and search for similar documents.")
+
+# CUDA memory clearing button - prominent placement at the top with warning
+if torch.cuda.is_available():
+    st.warning("⚠️ **IMPORTANT: Clear CUDA memory before processing large documents to avoid out-of-memory errors!**")
+    cuda_col1, cuda_col2 = st.columns([1, 3])
+    with cuda_col1:
+        if st.button("🧹 CLEAR CUDA MEMORY", type="primary", use_container_width=True):
+            torch.cuda.empty_cache()
+            st.session_state.cuda_memory_cleared = True
+            st.success("✅ CUDA memory cleared successfully!")
+    with cuda_col2:
+        if torch.cuda.is_available():
+            free_memory = torch.cuda.mem_get_info()[0] / (1024**3)  # Convert to GB
+            total_memory = torch.cuda.mem_get_info()[1] / (1024**3)  # Convert to GB
+            st.info(f"GPU: {torch.cuda.get_device_name(0)} | Free memory: {free_memory:.2f}GB / {total_memory:.2f}GB ({(free_memory/total_memory)*100:.1f}%)")
+
+# Display GPU status
+if torch.cuda.is_available():
+    st.sidebar.success(f"🚀 GPU Acceleration: Enabled ({torch.cuda.get_device_name(0)})")
+    
+    # GPU settings
+    st.sidebar.subheader("GPU Settings")
+    use_gpu = st.sidebar.checkbox("Use GPU for embeddings", value=st.session_state.use_gpu)
+    if use_gpu != st.session_state.use_gpu:
+        st.session_state.use_gpu = use_gpu
+        st.session_state.gpu_device = "cuda" if use_gpu else "cpu"
+        st.experimental_rerun()
+    
+    if st.session_state.use_gpu:
+        use_fp16 = st.sidebar.checkbox("Use FP16 precision (faster)", value=st.session_state.use_fp16)
+        if use_fp16 != st.session_state.use_fp16:
+            st.session_state.use_fp16 = use_fp16
+            st.experimental_rerun()
+else:
+    st.sidebar.warning("⚠️ GPU Acceleration: Not available (using CPU)")
+    st.session_state.gpu_device = "cpu"
+    st.session_state.use_gpu = False
+    st.session_state.use_fp16 = False
+
+
 
 # Define paths
 DEFAULT_DATA_FOLDER = os.path.join(os.path.dirname(__file__), "insert_data")
@@ -47,51 +121,69 @@ DB_INSERTED_PATH = os.path.join(os.path.dirname(__file__), "db_inserted")
 # Ensure the db_inserted directory exists
 os.makedirs(DB_INSERTED_PATH, exist_ok=True)
 
-# Initialize session state variables
-if 'embedding_model' not in st.session_state:
-    st.session_state.embedding_model = "Qwen/Qwen3-Embedding-0.6B"
-if 'selected_database' not in st.session_state:
-    st.session_state.selected_database = ""
-if 'chunk_size' not in st.session_state:
-    st.session_state.chunk_size = 2000
-if 'chunk_overlap' not in st.session_state:
-    st.session_state.chunk_overlap = 400
-if 'tenant_id' not in st.session_state:
-    st.session_state.tenant_id = "default"
-if 'vdb_dir' not in st.session_state:
-    st.session_state.vdb_dir = ""
-
 # Function to create a clean directory name from embedding model
 def clean_model_name(model_name):
     return model_name.replace('/', '--').replace('\\', '--')
 
 # Function to get embedding model
 def get_embedding_model(model_name):
+    # Determine device to use (GPU or CPU)
+    device = st.session_state.gpu_device
+    
+    # Log device being used
+    if device == "cpu":
+        st.info("Using CPU for embeddings (GPU not available)")
+    else:
+        gpu_info = f"GPU: {torch.cuda.get_device_name(0)}" if torch.cuda.is_available() else "No GPU detected"
+        st.success(f"Using {device} for embeddings ({gpu_info})")
+    
+    # Default to a known working model if the specified model has issues
+    fallback_model = "jinaai/jina-embeddings-v2-base-en"
+    
     try:
-        # Try with model_kwargs that work with newer versions
-        return HuggingFaceEmbeddings(
+        # Set up model kwargs based on device and precision settings
+        model_kwargs = {
+            'device': device
+        }
+        
+        # Create the HuggingFaceEmbeddings instance with the updated API
+        embeddings = HuggingFaceEmbeddings(
             model_name=model_name,
-            model_kwargs={'device': 'cpu'},
+            model_kwargs=model_kwargs,
             encode_kwargs={'normalize_embeddings': True}
         )
-    except NotImplementedError:
-        # Fallback for meta tensor error
-        import torch
-        import sentence_transformers
         
-        # Create the model directly with empty_init=False to avoid meta tensor issues
-        model = sentence_transformers.SentenceTransformer(
-            model_name,
-            device='cpu',
-            empty_init=False
-        )
+        # Handle float16 precision separately after model creation if needed
+        if st.session_state.use_fp16 and device != "cpu" and hasattr(embeddings, 'client'):
+            embeddings.client = embeddings.client.half()
+            
+        return embeddings
+    except Exception as e:
+        st.warning(f"Error loading model {model_name}: {str(e)}\nFalling back to {fallback_model}")
         
-        # Then create the embedding with the pre-loaded model
-        return HuggingFaceEmbeddings(
-            model_name=model_name,
-            client=model,
-            encode_kwargs={'normalize_embeddings': True}
-        )
+        try:
+            # Fallback approach if the primary method fails - use a known working model
+            import sentence_transformers
+            
+            # Create the model directly without empty_init parameter
+            model = sentence_transformers.SentenceTransformer(
+                fallback_model,
+                device=device
+            )
+            
+            # Convert to half precision if enabled and on GPU
+            if st.session_state.use_fp16 and device != "cpu":
+                model = model.half()
+            
+            # Then create the embedding with the pre-loaded model
+            return HuggingFaceEmbeddings(
+                model_name=fallback_model,
+                client=model,
+                encode_kwargs={'normalize_embeddings': True}
+            )
+        except Exception as fallback_error:
+            st.error(f"Failed to load fallback model: {str(fallback_error)}")
+            raise
 
 # Function to get file save date from filesystem
 def get_file_save_date(file_path):
@@ -503,6 +595,22 @@ with tab2:
             file_df = pd.DataFrame(file_data)
             st.dataframe(file_df)
             
+            # Sidebar
+            with st.sidebar:
+                # Create a spinner to show when loading the model
+                with st.spinner("Loading model..."):
+                    # Option to force CPU for very large documents
+                    st.session_state.force_cpu_large_docs = st.checkbox(
+                        "Force CPU for large documents", 
+                        value=st.session_state.force_cpu_large_docs, 
+                        help="Use CPU for processing very large documents to avoid CUDA OOM errors"
+                    )
+                    
+            # Clear CUDA memory before starting
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+                st.info("Initial CUDA memory cleared")
+                
             # Button to process files
             if st.button("Process Files"):
                 with st.spinner("Processing files..."):
@@ -517,6 +625,11 @@ with tab2:
                         
                         if not is_in_db and not is_in_inserted:
                             try:
+                                # Clear CUDA memory before processing each document
+                                if torch.cuda.is_available():
+                                    torch.cuda.empty_cache()
+                                    st.info(f"CUDA memory cleared before processing {filename}")
+                                    
                                 # Create embeddings
                                 file_path = os.path.join(DEFAULT_DATA_FOLDER, filename)
                                 
@@ -553,39 +666,124 @@ with tab2:
                                     
                                     # Process the file based on its type
                                     if file_ext == ".pdf":
-                                        # Extract text from PDF
-                                        text = extract_text_from_pdf(file_path)
+                                        # Check file size and switch to CPU if it's a large document and the option is enabled
+                                        file_size_mb = os.path.getsize(file_path) / (1024 * 1024)
+                                        original_device = st.session_state.gpu_device
                                         
-                                        # Create a document
-                                        document = Document(
-                                            page_content=text,
-                                            metadata={
-                                                "source": f"{original_filename}--{file_save_date}",
-                                                "path": file_path,
-                                                "original_filename": original_filename,
-                                                "file_save_date": file_save_date,
-                                                "insertion_date": insertion_date
-                                            }
-                                        )
+                                        # If file is large (> 10MB) and force CPU option is enabled, switch to CPU
+                                        if file_size_mb > 10 and st.session_state.force_cpu_large_docs:
+                                            st.warning(f"Large document detected ({file_size_mb:.2f}MB). Switching to CPU processing.")
+                                            st.session_state.gpu_device = "cpu"
+                                            # Get a CPU-based embedding model for this document
+                                            cpu_embed_model = get_embedding_model(st.session_state.embedding_model)
+                                            # Use the CPU model for this operation
+                                            embed_model = cpu_embed_model
                                         
-                                        # Log metadata for debugging
-                                        st.info(f"Document metadata: {document.metadata}")
+                                        try:
+                                            # Clear CUDA memory before extracting text from PDF
+                                            if torch.cuda.is_available():
+                                                torch.cuda.empty_cache()
+                                                
+                                            # Extract text from PDF
+                                            text = extract_text_from_pdf(file_path)
+                                            
+                                            # Clear CUDA memory before creating vector database
+                                            if torch.cuda.is_available():
+                                                torch.cuda.empty_cache()
+                                                
+                                            # Create a document
+                                            document = Document(
+                                                page_content=text,
+                                                metadata={
+                                                    "source": f"{original_filename}--{file_save_date}",
+                                                    "path": file_path,
+                                                    "original_filename": original_filename,
+                                                    "file_save_date": file_save_date,
+                                                    "insertion_date": insertion_date
+                                                }
+                                            )
+                                            
+                                            # Log metadata for debugging
+                                            st.info(f"Document metadata: {document.metadata}")
+                                            
+                                            # Create text splitter
+                                            text_splitter = RecursiveCharacterTextSplitter(
+                                                chunk_size=st.session_state.chunk_size,
+                                                chunk_overlap=st.session_state.chunk_overlap,
+                                                separators=["\n\n", "\n", ".", " ", ""]
+                                            )
+                                            
+                                            # Split document into chunks
+                                            doc_chunks = text_splitter.split_documents([document])
+                                            
+                                            # Add metadata to chunks
+                                            chunks = []
+                                            for chunk in doc_chunks:
+                                                chunk.metadata['source'] = document.metadata['source']
+                                                chunk.metadata['page'] = document.metadata.get('page', 0)
+                                        except RuntimeError as cuda_error:
+                                            if "CUDA out of memory" in str(cuda_error):
+                                                st.warning(f"CUDA out of memory when processing {filename}. Falling back to CPU...")
+                                                
+                                                # Save current device setting
+                                                original_device = st.session_state.gpu_device
+                                                
+                                                # Temporarily switch to CPU
+                                                st.session_state.gpu_device = "cpu"
+                                                
+                                                # Get a CPU-based embedding model
+                                                cpu_embed_model = get_embedding_model(st.session_state.embedding_model)
+                                                
+                                                # Clear CUDA memory again before retry with CPU
+                                                if torch.cuda.is_available():
+                                                    torch.cuda.empty_cache()
+                                                    
+                                                # Extract text from PDF
+                                                text = extract_text_from_pdf(file_path)
+                                                
+                                                # Create a document
+                                                document = Document(
+                                                    page_content=text,
+                                                    metadata={
+                                                        "source": f"{original_filename}--{file_save_date}",
+                                                        "path": file_path,
+                                                        "original_filename": original_filename,
+                                                        "file_save_date": file_save_date,
+                                                        "insertion_date": insertion_date
+                                                    }
+                                                )
+                                                
+                                                # Create text splitter
+                                                text_splitter = RecursiveCharacterTextSplitter(
+                                                    chunk_size=st.session_state.chunk_size,
+                                                    chunk_overlap=st.session_state.chunk_overlap,
+                                                    separators=["\n\n", "\n", ".", " ", ""]
+                                                )
+                                                
+                                                # Split document into chunks
+                                                doc_chunks = text_splitter.split_documents([document])
+                                                
+                                                # Add metadata to chunks
+                                                chunks = []
+                                                for chunk in doc_chunks:
+                                                    chunk.metadata['source'] = document.metadata['source']
+                                                    chunk.metadata['page'] = document.metadata.get('page', 0)
+                                                    
+                                                # Restore original device setting for future operations
+                                                st.session_state.gpu_device = original_device
+                                                
+                                                # Use the CPU model for this operation
+                                                embed_model = cpu_embed_model
+                                            else:
+                                                # Re-raise if it's not a CUDA memory error
+                                                raise
                                         
-                                        # Create text splitter
-                                        text_splitter = RecursiveCharacterTextSplitter(
-                                            chunk_size=st.session_state.chunk_size,
-                                            chunk_overlap=st.session_state.chunk_overlap,
-                                            separators=["\n\n", "\n", ".", " ", ""]
-                                        )
-                                        
-                                        # Split document into chunks
-                                        doc_chunks = text_splitter.split_documents([document])
-                                        
-                                        # Add metadata to chunks
-                                        chunks = []
+                                        # Restore original device setting after processing if we switched to CPU for large file
+                                        if file_size_mb > 10 and st.session_state.force_cpu_large_docs:
+                                            st.session_state.gpu_device = original_device
+                                                
+                                        # Add additional metadata to chunks and collect them
                                         for chunk in doc_chunks:
-                                            chunk.metadata['source'] = document.metadata['source']
-                                            chunk.metadata['page'] = document.metadata.get('page', 0)
                                             chunk.metadata['path'] = document.metadata.get('path', '')
                                             chunk.metadata['original_filename'] = document.metadata.get('original_filename', '')
                                             chunk.metadata['file_save_date'] = document.metadata.get('file_save_date', '')
@@ -607,8 +805,28 @@ with tab2:
                                             embedding_function=embed_model
                                         )
                                         
-                                        # Add documents to vectorstore
-                                        vectorstore.add_documents(chunks)
+                                        # Clear CUDA memory immediately before embedding allocation
+                                        if torch.cuda.is_available():
+                                            torch.cuda.empty_cache()
+                                            st.info("CUDA memory cleared before embedding allocation")
+                                            
+                                        # Process chunks in smaller batches to reduce memory usage
+                                        batch_size = 10  # Adjust this based on your document size and GPU memory
+                                        for i in range(0, len(chunks), batch_size):
+                                            # Clear CUDA memory before each batch
+                                            if torch.cuda.is_available():
+                                                torch.cuda.empty_cache()
+                                                
+                                            # Get the current batch
+                                            batch_chunks = chunks[i:i+batch_size]
+                                            st.info(f"Processing batch {i//batch_size + 1}/{(len(chunks)-1)//batch_size + 1} with {len(batch_chunks)} chunks")
+                                            
+                                            # Add documents to vectorstore
+                                            vectorstore.add_documents(batch_chunks)
+                                            
+                                            # Give a small delay for memory cleanup between batches
+                                            import time
+                                            time.sleep(0.5)
                                         
                                         # Copy file to db_inserted folder using original filename
                                         copy_file_to_inserted(file_path, original_filename, insertion_date)
