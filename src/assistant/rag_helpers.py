@@ -244,6 +244,9 @@ def transform_documents(documents):
 
 # Function to summarize sources using Ollama
 def source_summarizer_ollama(query, context_documents, language, system_message, llm_model="deepseek-r1"):
+    # Import streamlit here to avoid circular imports
+    import streamlit as st
+    
     # Check if context_documents is already a formatted string
     if isinstance(context_documents, str):
         formatted_context = context_documents
@@ -257,10 +260,7 @@ def source_summarizer_ollama(query, context_documents, language, system_message,
         except (TypeError, KeyError):
             # Fallback: try to use the documents as they are
             formatted_context = str(context_documents)
-    #formatted_context = "\n".join(
-    #    f"{str(doc)}"
-    #    for doc in context_documents
-    #)
+    
     prompt = f"""
     Based on the user's query
 
@@ -273,12 +273,17 @@ def source_summarizer_ollama(query, context_documents, language, system_message,
     Provide a deep summary in the language {language} with proper citations:
     """
     
-    # Initialize ChatOllama with the specified model and temperature
-    llm = Ollama(model=llm_model, temperature=0.1, repeat_penalty=1.2) 
-    # For RAG systems like your summarizer, consider:
-    #    Using lower temperatures (0.1-0.3) for factual accuracy
-    #   Combining with repeat_penalty=1.1-1.3 to avoid redundant content
-    #   Monitoring token usage with num_ctx for long documents
+    # Check if we already have this LLM model in session state
+    llm_key = f"llm_instance_{llm_model}"
+    if llm_key not in st.session_state:
+        # Initialize ChatOllama with the specified model and temperature
+        print(f"Creating new LLM instance for model: {llm_model}")
+        llm = Ollama(model=llm_model, temperature=0.1, repeat_penalty=1.2)
+        # Cache the LLM in session state
+        st.session_state[llm_key] = llm
+    else:
+        print(f"Using cached LLM instance for model: {llm_model}")
+        llm = st.session_state[llm_key]
     
     # Format messages for LangChain
     messages = [

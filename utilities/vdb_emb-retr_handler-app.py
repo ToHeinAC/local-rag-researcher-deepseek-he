@@ -154,6 +154,12 @@ def clean_model_name(model_name):
 
 # Function to get embedding model
 def get_embedding_model(model_name):
+    # Check if we already have this model in session state
+    model_key = f"embedding_model_instance_{model_name}_{st.session_state.gpu_device}"
+    if model_key in st.session_state:
+        st.info(f"Using cached embedding model: {model_name}")
+        return st.session_state[model_key]
+    
     # Determine device to use (GPU or CPU)
     device = st.session_state.gpu_device
     
@@ -183,7 +189,9 @@ def get_embedding_model(model_name):
         # Handle float16 precision separately after model creation if needed
         if st.session_state.use_fp16 and device != "cpu" and hasattr(embeddings, 'client'):
             embeddings.client = embeddings.client.half()
-            
+        
+        # Cache the model in session state
+        st.session_state[model_key] = embeddings
         return embeddings
     except Exception as e:
         st.warning(f"Error loading model {model_name}: {str(e)}\nFalling back to {fallback_model}")
@@ -198,18 +206,23 @@ def get_embedding_model(model_name):
                 device=device
             )
             
-            # Convert to half precision if enabled and on GPU
-            if st.session_state.use_fp16 and device != "cpu":
-                model = model.half()
+            # Create a custom embedding function that uses the model
+            class SentenceTransformerEmbeddings(HuggingFaceEmbeddings):
+                def __init__(self, model):
+                    self.client = model
+                    
+                def embed_documents(self, texts):
+                    return self.client.encode(texts, convert_to_numpy=True).tolist()
+                    
+                def embed_query(self, text):
+                    return self.client.encode(text, convert_to_numpy=True).tolist()
             
-            # Then create the embedding with the pre-loaded model
-            return HuggingFaceEmbeddings(
-                model_name=fallback_model,
-                client=model,
-                encode_kwargs={'normalize_embeddings': True}
-            )
-        except Exception as fallback_error:
-            st.error(f"Failed to load fallback model: {str(fallback_error)}")
+            # Create and cache the fallback embedding model
+            fallback_embeddings = SentenceTransformerEmbeddings(model)
+            st.session_state[f"embedding_model_instance_{fallback_model}_{device}"] = fallback_embeddings
+            return fallback_embeddings
+        except Exception as e:
+            st.error(f"Failed to load fallback model: {str(e)}")
             raise
 
 # Function to get file save date from filesystem
@@ -923,37 +936,41 @@ with tab3:
                 
                 # Parse metadata from vector database
                 doc_data = []
+                
+                # Get tenant vectorstore once for all documents
+                tenant_vdb_dir = os.path.join(st.session_state.vdb_dir, st.session_state.tenant_id)
+                collection_name = get_tenant_collection_name(st.session_state.tenant_id)
+                vectorstore = Chroma(
+                    persist_directory=tenant_vdb_dir,
+                    collection_name=collection_name,
+                    embedding_function=embed_model
+                )
+                
+                # Get all metadata at once
+                result = vectorstore.get()
+                
                 for doc in all_docs:
                     # Initialize default values
                     file_save_date = "N/A"
                     insertion_date = "N/A"
                     original_filename = doc
+                    all_metadata = {}
                     
                     # Extract the metadata from the vector database
                     try:
-                        # Get the document metadata from the vector database
-                        tenant_vdb_dir = os.path.join(st.session_state.vdb_dir, st.session_state.tenant_id)
-                        collection_name = get_tenant_collection_name(st.session_state.tenant_id)
-                        vectorstore = Chroma(
-                            persist_directory=tenant_vdb_dir,
-                            collection_name=collection_name,
-                            embedding_function=embed_model
-                        )
-                        
-                        # Get metadata for this document
-                        result = vectorstore.get()
                         if 'metadatas' in result and result['metadatas']:
                             for i, metadata in enumerate(result['metadatas']):
                                 if metadata and 'source' in metadata and metadata['source'] == doc:
+                                    # Store all metadata for display in expander
+                                    all_metadata = metadata.copy()
+                                    
                                     # Get original_filename from metadata if available
                                     if 'original_filename' in metadata and metadata['original_filename']:
                                         original_filename = metadata['original_filename']
-                                        st.info(f"Found original filename in metadata: {original_filename}")
                                     
                                     # Get file_save_date from metadata if available
                                     if 'file_save_date' in metadata and metadata['file_save_date']:
                                         file_save_date_raw = metadata['file_save_date']
-                                        st.info(f"Found file save date in metadata: {file_save_date_raw}")
                                         # Format the date as YY-MM-DD if it's in YYMMDD format
                                         if len(file_save_date_raw) == 6 and file_save_date_raw.isdigit():
                                             file_save_date = f"{file_save_date_raw[:2]}-{file_save_date_raw[2:4]}-{file_save_date_raw[4:]}"
@@ -963,7 +980,6 @@ with tab3:
                                     # Get insertion_date from metadata if available
                                     if 'insertion_date' in metadata and metadata['insertion_date']:
                                         insertion_date_raw = metadata['insertion_date']
-                                        st.info(f"Found insertion date in metadata: {insertion_date_raw}")
                                         # Format the date as YY-MM-DD if it's in YYMMDD format
                                         if len(insertion_date_raw) == 6 and insertion_date_raw.isdigit():
                                             insertion_date = f"{insertion_date_raw[:2]}-{insertion_date_raw[2:4]}-{insertion_date_raw[4:]}"
@@ -971,10 +987,6 @@ with tab3:
                                             insertion_date = insertion_date_raw
                                     
                                     break
-                        
-                        # Clean up
-                        vectorstore._client = None
-                        del vectorstore
                     except Exception as e:
                         # If there's an error, just use the default values
                         print(f"Error getting metadata: {str(e)}")
@@ -989,16 +1001,47 @@ with tab3:
                                 else:
                                     file_save_date = file_save_date_raw
                     
+                    # Add to document data list
                     doc_data.append({
-                        "Original Filename": original_filename,
+                        "Document": original_filename,
                         "File Save Date": file_save_date,
                         "Insertion Date": insertion_date,
-                        "Full Document Name": doc
+                        "Source": doc,
+                        "Metadata": all_metadata
                     })
                 
-                # Display documents in a table
-                doc_df = pd.DataFrame(doc_data)
-                st.dataframe(doc_df)
+                # Clean up vectorstore
+                vectorstore._client = None
+                del vectorstore
+                
+                # Create a dataframe for display
+                import pandas as pd
+                display_df = pd.DataFrame([
+                    {
+                        "Document": item["Document"],
+                        "File Save Date": item["File Save Date"],
+                        "Insertion Date": item["Insertion Date"]
+                    } for item in doc_data
+                ])
+                
+                # Display the dataframe
+                st.dataframe(display_df)
+                
+                # Show expandable metadata for each document
+                st.subheader("Document Metadata Details")
+                for i, doc_item in enumerate(doc_data):
+                    with st.expander(f"📄 {doc_item['Document']}"):
+                        st.markdown(f"**Source:** {doc_item['Source']}")
+                        st.markdown(f"**File Save Date:** {doc_item['File Save Date']}")
+                        st.markdown(f"**Insertion Date:** {doc_item['Insertion Date']}")
+                        
+                        # Display all metadata in a formatted way
+                        st.markdown("### All Metadata")
+                        if doc_item['Metadata']:
+                            for key, value in doc_item['Metadata'].items():
+                                st.markdown(f"**{key}:** {value}")
+                        else:
+                            st.info("No additional metadata available")
                 
                 # Show total count
                 st.success(f"Total documents in database: {len(all_docs)}")
