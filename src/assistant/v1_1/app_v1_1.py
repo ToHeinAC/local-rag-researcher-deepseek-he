@@ -58,7 +58,7 @@ DEFAULT_DATA_FOLDER = os.path.join(os.path.dirname(__file__), "data")
 DATABASE_PATH = os.path.join(PROJECT_ROOT, "database")
 
 # Define default tenant and collection settings
-DEFAULT_TENANT_ID = '2025-04-22_15-41-10'
+DEFAULT_TENANT_ID = 'default'
 DEFAULT_COLLECTION_PREFIX = 'collection_'
 
 # Special database configuration for automatic tenant/collection selection
@@ -520,6 +520,7 @@ def generate_response(user_input, enable_web_search, report_structure, max_searc
                                 with st.expander(f"Document {j+1}: {doc.metadata.get('source', 'Unknown')}"):
                                     st.write(f"**Source:** {doc.metadata.get('source', 'Unknown')}")
                                     st.write(f"**Path:** {doc.metadata.get('path', 'Unknown')}")
+                                    st.write(f"**Chunk Nr:** {doc.metadata.get('chunk_id', 'Unknown')}")
                                     st.write(f"**Content:**\n{doc.page_content}")
                         else:
                             st.warning("No documents retrieved for this query.")
@@ -677,6 +678,7 @@ def generate_response(user_input, enable_web_search, report_structure, max_searc
                         with st.expander(f"Document {i+1}: {doc.metadata.get('source', 'Unknown')}"):
                             st.write(f"**Source:** {doc.metadata.get('source', 'Unknown')}")
                             st.write(f"**Path:** {doc.metadata.get('path', 'Unknown')}")
+                            st.write(f"**Chunk Nr:** {doc.metadata.get('chunk_id', 'Unknown')}")
                             st.write(f"**Content:**\n{doc.page_content}")
                     
                     # We already detected the language above, reuse it for summarization
@@ -880,6 +882,7 @@ def generate_response(user_input, enable_web_search, report_structure, max_searc
                                                         with st.expander(f"Document {j+1}: {doc.metadata.get('source', 'Unknown')}"):
                                                             st.write(f"**Source:** {doc.metadata.get('source', 'Unknown')}")
                                                             st.write(f"**Path:** {doc.metadata.get('path', 'Unknown')}")
+                                                            st.write(f"**Chunk Nr:** {doc.metadata.get('chunk_id', 'Unknown')}")
                                                             st.write(f"**Content:**\n{doc.page_content}")
                                                 else:
                                                     st.warning("No documents retrieved for this query.")
@@ -914,6 +917,7 @@ def generate_response(user_input, enable_web_search, report_structure, max_searc
                                                     with st.expander(f"Document {j+1}: {doc.metadata.get('source', 'Unknown')}"):
                                                         st.write(f"**Source:** {doc.metadata.get('source', 'Unknown')}")
                                                         st.write(f"**Path:** {doc.metadata.get('path', 'Unknown')}")
+                                                        st.write(f"**Chunk Nr:** {doc.metadata.get('chunk_id', 'Unknown')}")
                                                         st.write(f"**Content:**\n{doc.page_content}")
                                             else:
                                                 st.warning("No documents retrieved for this query.")
@@ -1063,7 +1067,7 @@ def main():
     # Add Report LLM model selector to sidebar
     llm_models = ["qwq", "deepseek-r1:latest", "deepseek-r1:70b", "gemma3:27b", "mistral-small:latest", 
                  "deepseek-r1:1.5b", "llama3.1:8b-instruct-q4_0", "llama3.2", "llama3.3", "llama3.3:70b-instruct-q4_K_M", "gemma3:4b", "phi4-mini", 
-                 "mistral:instruct", "mistrallite"]
+                 "mistral:instruct", "mistrallite", "qwen3:30b-a3b"]
     
     st.sidebar.subheader("LLM Models")
     
