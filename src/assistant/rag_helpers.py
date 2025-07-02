@@ -49,7 +49,10 @@ def calculate_chunk_ids(chunks):
     for i, chunk in enumerate(chunks):
         source = chunk.metadata.get('source', 'unknown')
         page = chunk.metadata.get('page', 0)
-        chunk.metadata['id'] = f"{source}:{page}:{i}"
+        chunk_id = f"{source}:{page}:{i}"
+        chunk.metadata['id'] = chunk_id
+        # Also store as chunk_id for easier retrieval display
+        chunk.metadata['chunk_id'] = i
     return chunks
 
 def get_tenant_collection_name(tenant_id):

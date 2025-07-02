@@ -32,6 +32,8 @@ from langchain_community.document_loaders import DirectoryLoader
 from langchain_core.documents import Document
 from src.assistant.prompts import SUMMARIZER_SYSTEM_PROMPT
 
+###Run command: streamlit run ./utilities/vdb_emb-retr_handler-app.py --server.port 8501  --server.headless False
+
 # Set page configuration
 st.set_page_config(
     page_title="Vector Database Handler",
@@ -1027,6 +1029,7 @@ with tab3:
                             for i, doc in enumerate(results):
                                 with st.expander(f"Document {i+1}: {doc.metadata.get('source', 'Unknown')}"):
                                     st.write(f"**Source:** {doc.metadata.get('source', 'Unknown')}")
+                                    st.write(f"**Chunk Nr:** {doc.metadata.get('chunk_id', 'Unknown')}")
                                     st.write(f"**Path:** {doc.metadata.get('path', 'Unknown')}")
                                     st.write(f"**Content:**\n{doc.page_content}")
                         except Exception as e:
