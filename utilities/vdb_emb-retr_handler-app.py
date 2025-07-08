@@ -472,7 +472,7 @@ def copy_file_to_inserted(source_path, filename, date_str):
     return target_path
 
 # Create tabs for the different steps
-tab1, tab2, tab3 = st.tabs(["Step 1: Select/Create Database", "Step 2: Insert Documents", "Step 3: View Database"])
+tab1, tab2, tab3, tab4 = st.tabs(["Step 1: Select/Create Database", "Step 2: Insert Documents", "Step 3: View Database", "Step 4: Manage Deletions"])
 
 # Step 1: Select or Create Database
 with tab1:
@@ -1081,6 +1081,418 @@ with tab3:
                 st.warning("No documents found in the database. Please insert documents in Step 2.")
         except Exception as e:
             st.error(f"Error retrieving database contents: {str(e)}")
+
+# Function to delete documents from vector database
+def delete_documents_from_vectordb(tenant_id, embed_llm, persist_directory, document_source):
+    """
+    Delete all chunks associated with a specific document source from the vector database
+    
+    Args:
+        tenant_id (str): The tenant ID
+        embed_llm: The embedding model
+        persist_directory (str): The directory where the vector database is stored
+        document_source (str): The source identifier of the document to delete (format: filename--date)
+        
+    Returns:
+        bool: True if deletion was successful, False otherwise
+    """
+    try:
+        # Get tenant-specific directory
+        tenant_vdb_dir = os.path.join(persist_directory, tenant_id)
+        
+        # Check if directory exists
+        if not os.path.exists(tenant_vdb_dir):
+            return False
+        
+        # Get collection name for tenant
+        collection_name = get_tenant_collection_name(tenant_id)
+        
+        # Initialize vectorstore
+        vectorstore = Chroma(
+            persist_directory=tenant_vdb_dir,
+            collection_name=collection_name,
+            embedding_function=embed_llm
+        )
+        
+        try:
+            # Get all documents
+            result = vectorstore.get()
+            
+            # Find IDs of chunks with matching source
+            ids_to_delete = []
+            if 'ids' in result and 'metadatas' in result:
+                for i, metadata in enumerate(result['metadatas']):
+                    if metadata and 'source' in metadata and metadata['source'] == document_source:
+                        ids_to_delete.append(result['ids'][i])
+            
+            # Delete chunks if any found
+            if ids_to_delete:
+                vectorstore.delete(ids=ids_to_delete)
+                st.success(f"Deleted {len(ids_to_delete)} chunks for document: {document_source}")
+            else:
+                st.warning(f"No chunks found for document: {document_source}")
+            
+            # Clean up
+            vectorstore._client = None
+            del vectorstore
+            
+            return len(ids_to_delete) > 0
+        except Exception as e:
+            # Clean up in case of error
+            if 'vectorstore' in locals():
+                vectorstore._client = None
+                del vectorstore
+            
+            # Re-raise the exception
+            st.error(f"Error deleting chunks: {str(e)}")
+            return False
+    except Exception as e:
+        st.error(f"Error accessing vector database: {str(e)}")
+        return False
+
+# Function to rename file in db_inserted folder with _removed suffix
+def rename_file_with_removed_suffix(filename):
+    """
+    Rename a file in the db_inserted folder with _removed suffix
+    
+    Args:
+        filename (str): The original filename without path
+        
+    Returns:
+        bool: True if renaming was successful, False otherwise
+    """
+    try:
+        # Check if the db_inserted folder exists
+        if not os.path.exists(DB_INSERTED_PATH):
+            st.error(f"DB inserted folder not found: {DB_INSERTED_PATH}")
+            return False
+        
+        # Get the file path
+        file_path = os.path.join(DB_INSERTED_PATH, filename)
+        
+        # Check if the file exists
+        if not os.path.exists(file_path):
+            st.error(f"File not found in db_inserted folder: {filename}")
+            return False
+        
+        # Get file name and extension
+        file_name, file_ext = os.path.splitext(filename)
+        
+        # Create new filename with _removed suffix
+        new_filename = f"{file_name}_removed{file_ext}"
+        new_file_path = os.path.join(DB_INSERTED_PATH, new_filename)
+        
+        # Rename the file
+        os.rename(file_path, new_file_path)
+        
+        st.success(f"Renamed file to: {new_filename}")
+        return True
+    except Exception as e:
+        st.error(f"Error renaming file: {str(e)}")
+        return False
+
+# Function to get all files with _removed suffix in db_inserted folder
+def get_removed_files():
+    """
+    Get all files with _removed suffix in db_inserted folder
+    
+    Returns:
+        list: A list of filenames with _removed suffix
+    """
+    try:
+        # Check if the db_inserted folder exists
+        if not os.path.exists(DB_INSERTED_PATH):
+            return []
+        
+        # Get all files in the db_inserted folder
+        all_files = os.listdir(DB_INSERTED_PATH)
+        
+        # Filter files with _removed suffix
+        removed_files = []
+        for filename in all_files:
+            if "_removed" in filename:
+                removed_files.append(filename)
+        
+        return removed_files
+    except Exception as e:
+        st.error(f"Error getting removed files: {str(e)}")
+        return []
+
+# Function to permanently delete files
+def permanently_delete_files(filenames):
+    """
+    Permanently delete files from db_inserted folder
+    
+    Args:
+        filenames (list): List of filenames to delete
+        
+    Returns:
+        tuple: (success_count, error_count, errors)
+    """
+    success_count = 0
+    error_count = 0
+    errors = []
+    
+    for filename in filenames:
+        try:
+            file_path = os.path.join(DB_INSERTED_PATH, filename)
+            if os.path.exists(file_path):
+                os.remove(file_path)
+                success_count += 1
+            else:
+                error_count += 1
+                errors.append(f"File not found: {filename}")
+        except Exception as e:
+            error_count += 1
+            errors.append(f"Error deleting {filename}: {str(e)}")
+    
+    return success_count, error_count, errors
+
+# Step 4: Delete Documents
+with tab4:
+    st.header("Delete Documents from Vector Database")
+    
+    if not st.session_state.vdb_dir:
+        st.warning("Please select or create a database in Step 1 first.")
+    else:
+        st.success(f"Using database: **{st.session_state.selected_database}**")
+        st.info(f"Embedding model: **{st.session_state.embedding_model}**")
+        st.info(f"Tenant ID: **{st.session_state.tenant_id}**")
+        
+        # Create tabs for delete operations
+        delete_tab1, delete_tab2 = st.tabs(["Delete from Vector Database", "Manage Removed Files"])
+        
+        # Tab for deleting from vector database
+        with delete_tab1:
+            try:
+                # Get embedding model
+                embed_model = get_embedding_model(st.session_state.embedding_model)
+                
+                # Get all documents in the database
+                all_docs = get_all_documents_in_vectordb(st.session_state.tenant_id, embed_model, st.session_state.vdb_dir)
+                
+                if all_docs:
+                    st.subheader("Documents Available for Deletion")
+                    
+                    # Parse metadata from vector database
+                    doc_data = []
+                    
+                    # Get tenant vectorstore once for all documents
+                    tenant_vdb_dir = os.path.join(st.session_state.vdb_dir, st.session_state.tenant_id)
+                    collection_name = get_tenant_collection_name(st.session_state.tenant_id)
+                    vectorstore = Chroma(
+                        persist_directory=tenant_vdb_dir,
+                        collection_name=collection_name,
+                        embedding_function=embed_model
+                    )
+                    
+                    # Get all metadata at once
+                    result = vectorstore.get()
+                    
+                    for doc in all_docs:
+                        # Initialize default values
+                        file_save_date = "N/A"
+                        insertion_date = "N/A"
+                        original_filename = doc
+                        all_metadata = {}
+                        
+                        # Extract the metadata from the vector database
+                        try:
+                            if 'metadatas' in result and result['metadatas']:
+                                for i, metadata in enumerate(result['metadatas']):
+                                    if metadata and 'source' in metadata and metadata['source'] == doc:
+                                        # Store all metadata for display in expander
+                                        all_metadata = metadata.copy()
+                                        
+                                        # Get original_filename from metadata if available
+                                        if 'original_filename' in metadata and metadata['original_filename']:
+                                            original_filename = metadata['original_filename']
+                                        
+                                        # Get file_save_date from metadata if available
+                                        if 'file_save_date' in metadata and metadata['file_save_date']:
+                                            file_save_date_raw = metadata['file_save_date']
+                                            # Format the date as YY-MM-DD if it's in YYMMDD format
+                                            if len(file_save_date_raw) == 6 and file_save_date_raw.isdigit():
+                                                file_save_date = f"{file_save_date_raw[:2]}-{file_save_date_raw[2:4]}-{file_save_date_raw[4:]}"
+                                            else:
+                                                file_save_date = file_save_date_raw
+                                        
+                                        # Get insertion_date from metadata if available
+                                        if 'insertion_date' in metadata and metadata['insertion_date']:
+                                            insertion_date_raw = metadata['insertion_date']
+                                            # Format the date as YY-MM-DD if it's in YYMMDD format
+                                            if len(insertion_date_raw) == 6 and insertion_date_raw.isdigit():
+                                                insertion_date = f"{insertion_date_raw[:2]}-{insertion_date_raw[2:4]}-{insertion_date_raw[4:]}"
+                                            else:
+                                                insertion_date = insertion_date_raw
+                                        
+                                        break
+                        except Exception as e:
+                            # If there's an error, just use the default values
+                            print(f"Error getting metadata: {str(e)}")
+                            # Try to extract information from filename if it follows the pattern
+                            if "--" in doc:
+                                parts = doc.split("--")
+                                if len(parts) >= 2:
+                                    original_filename = parts[0]
+                                    file_save_date_raw = parts[1]
+                                    if len(file_save_date_raw) == 6 and file_save_date_raw.isdigit():
+                                        file_save_date = f"{file_save_date_raw[:2]}-{file_save_date_raw[2:4]}-{file_save_date_raw[4:]}"
+                                    else:
+                                        file_save_date = file_save_date_raw
+                        
+                        # Add to document data list
+                        doc_data.append({
+                            "Document": original_filename,
+                            "File Save Date": file_save_date,
+                            "Insertion Date": insertion_date,
+                            "Source": doc,
+                            "Metadata": all_metadata
+                        })
+                    
+                    # Clean up vectorstore
+                    vectorstore._client = None
+                    del vectorstore
+                    
+                    # Create a dataframe for display
+                    import pandas as pd
+                    display_df = pd.DataFrame([
+                        {
+                            "Document": item["Document"],
+                            "File Save Date": item["File Save Date"],
+                            "Insertion Date": item["Insertion Date"]
+                        } for item in doc_data
+                    ])
+                    
+                    # Display the dataframe
+                    st.dataframe(display_df)
+                    
+                    # Select document to delete
+                    st.subheader("Select Document to Delete")
+                    
+                    # Create a list of document options with their metadata
+                    doc_options = [f"{item['Document']} (Save Date: {item['File Save Date']})" for item in doc_data]
+                    selected_doc_index = st.selectbox("Select a document to delete", range(len(doc_options)), format_func=lambda i: doc_options[i])
+                    
+                    # Get the selected document data
+                    selected_doc = doc_data[selected_doc_index]
+                    
+                    # Show warning and confirmation
+                    st.warning(f"⚠️ You are about to delete all chunks for document: **{selected_doc['Document']}**")
+                    st.info(f"Original filename: {selected_doc['Document']}")
+                    st.info(f"Source identifier: {selected_doc['Source']}")
+                    
+                    # Confirmation checkbox
+                    confirm_delete = st.checkbox("I confirm that I want to delete this document from the vector database")
+                    
+                    if st.button("Delete Document") and confirm_delete:
+                        with st.spinner("Deleting document from vector database..."):
+                            # Delete document from vector database
+                            delete_success = delete_documents_from_vectordb(
+                                tenant_id=st.session_state.tenant_id,
+                                embed_llm=embed_model,
+                                persist_directory=st.session_state.vdb_dir,
+                                document_source=selected_doc['Source']
+                            )
+                            
+                            if delete_success:
+                                # Rename file in db_inserted folder
+                                rename_success = rename_file_with_removed_suffix(selected_doc['Document'])
+                                
+                                if rename_success:
+                                    st.success(f"✅ Document successfully deleted and file renamed with _removed suffix")
+                                else:
+                                    st.warning(f"⚠️ Document was deleted from vector database but file could not be renamed")
+                                    
+                                # Refresh the page to update the document list
+                                st.info("Please refresh the page to update the document list")
+                                if st.button("Refresh Page"):
+                                    st.experimental_rerun()
+                else:
+                    st.warning("No documents found in the database. Please insert documents in Step 2.")
+            except Exception as e:
+                st.error(f"Error retrieving database contents: {str(e)}")
+        
+        # Tab for managing removed files
+        with delete_tab2:
+            st.subheader("Manage Removed Files")
+            
+            # Get all files with _removed suffix
+            removed_files = get_removed_files()
+            
+            if removed_files:
+                st.success(f"Found {len(removed_files)} files marked for removal")
+                
+                # Initialize session state for file selection if not exists
+                if 'selected_files_for_deletion' not in st.session_state:
+                    st.session_state.selected_files_for_deletion = {}
+                
+                # Create a container for the file list
+                with st.container():
+                    st.markdown("### Files Marked for Removal")
+                    st.markdown("Select files to permanently delete:")
+                    
+                    # Create checkboxes for each file
+                    for file in removed_files:
+                        # Initialize if not exists
+                        if file not in st.session_state.selected_files_for_deletion:
+                            st.session_state.selected_files_for_deletion[file] = False
+                        
+                        # Create checkbox and update session state
+                        selected = st.checkbox(f"❌ {file}", value=st.session_state.selected_files_for_deletion[file], key=f"select_{file}")
+                        st.session_state.selected_files_for_deletion[file] = selected
+                
+                # Count selected files
+                selected_count = sum(1 for file, selected in st.session_state.selected_files_for_deletion.items() if selected)
+                
+                # Show delete button if files are selected
+                if selected_count > 0:
+                    st.warning(f"⚠️ You have selected {selected_count} files for permanent deletion")
+                    
+                    # Add select all / deselect all buttons in columns
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        if st.button("Select All"):
+                            for file in removed_files:
+                                st.session_state.selected_files_for_deletion[file] = True
+                            st.experimental_rerun()
+                    with col2:
+                        if st.button("Deselect All"):
+                            for file in removed_files:
+                                st.session_state.selected_files_for_deletion[file] = False
+                            st.experimental_rerun()
+                    
+                    # Confirmation checkbox
+                    confirm_permanent_delete = st.checkbox("I understand that this action will permanently delete the selected files and cannot be undone")
+                    
+                    # Delete button
+                    if st.button("⚠️ Permanently Delete Selected Files") and confirm_permanent_delete:
+                        with st.spinner("Deleting files..."):
+                            # Get list of files to delete
+                            files_to_delete = [file for file, selected in st.session_state.selected_files_for_deletion.items() if selected]
+                            
+                            # Delete files
+                            success_count, error_count, errors = permanently_delete_files(files_to_delete)
+                            
+                            # Show results
+                            if success_count > 0:
+                                st.success(f"✅ Successfully deleted {success_count} files")
+                            
+                            if error_count > 0:
+                                st.error(f"Failed to delete {error_count} files")
+                                for error in errors:
+                                    st.error(error)
+                            
+                            # Reset selection state
+                            st.session_state.selected_files_for_deletion = {}
+                            
+                            # Refresh button
+                            if st.button("Refresh List"):
+                                st.experimental_rerun()
+                else:
+                    st.info("Select files to delete using the checkboxes above")
+            else:
+                st.info("No files marked for removal found in the db_inserted folder")
 
 # Add a footer
 st.markdown("---")

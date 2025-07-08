@@ -103,7 +103,7 @@ def generate_research_queries(state: ResearcherState, config: RunnableConfig):
         additional_context=f"Consider this additional context when generating queries: {additional_context}" if additional_context else ""
     )
     
-    # Using local Deepseek R1 model with Ollama
+    # Using local llm model with Ollama
     result = invoke_ollama(
         model=llm_model,
         system_prompt=system_prompt,
