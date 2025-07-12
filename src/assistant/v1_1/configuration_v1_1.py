@@ -51,6 +51,12 @@ class Configuration:
         if hasattr(self, key):
             return getattr(self, key)
         raise KeyError(f"Configuration has no attribute {key}")
+        
+    def get(self, key, default=None):
+        """Dictionary-like get method that returns default if key doesn't exist."""
+        if hasattr(self, key):
+            return getattr(self, key)
+        return default
 
 # Global configuration instance
 _config_instance = None

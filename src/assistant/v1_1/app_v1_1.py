@@ -2,7 +2,6 @@ import streamlit as st
 import streamlit_nested_layout
 import warnings
 import logging
-import torch
 import os
 import re
 import sys
@@ -11,6 +10,23 @@ import tempfile
 from datetime import datetime, timedelta
 from pathlib import Path
 from IPython.display import Image, display
+
+# Add a workaround for the Streamlit/torch module path extraction issue
+# This needs to be done before importing torch
+class PathHack:
+    def __init__(self, path):
+        self.path = path
+    def _path(self):
+        return [self.path]
+    def __getattr__(self, name):
+        if name == '_path':
+            return self._path
+        raise AttributeError(f"'{self.__class__.__name__}' object has no attribute '{name}'")
+
+sys.modules['torch._classes.__path__'] = PathHack(os.path.dirname(os.path.abspath(__file__)))
+
+# Now import torch after the workaround
+import torch
 
 # Import visualization libraries (with fallback if not available)
 try:

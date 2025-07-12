@@ -1,37 +1,37 @@
-## wie können Rückstände aus der strahlenschutzrechtlichen Überwachung entlassen werden?
-Content: Content: Keine relevanten Dokumente wurden in der Datenbank gefunden für die Anfrage: 'wie können Rückstände aus der strahlenschutzrechtlichen Überwachung entlassen werden?'
+## Wie können Rückstände aus der Überwachung entlassen werden?
+Content: Content: Keine relevanten Dokumente wurden in der Datenbank gefunden für die Anfrage: 'Wie können Rückstände aus der Überwachung entlassen werden?'
 Source_filename: []
 Source_path: []
 Source: 
 
 
 
-## Welche gesetzlichen Vorgaben gelten für die Beseitigung von Kontaminationsresten nach §64 Abs. 1 StrlSchG?
-Content: Content: Keine relevanten Dokumente wurden in der Datenbank gefunden für die Anfrage: 'Welche gesetzlichen Vorgaben gelten für die Beseitigung von Kontaminationsresten nach §64 Abs. 1 StrlSchG?'
+## Welche Voraussetzungen sind gemäß § 62 des Strahlenschutzgesetzes erforderlich für die Entlassung von überwachungsbedürftigen Rückständen?
+Content: Content: Keine relevanten Dokumente wurden in der Datenbank gefunden für die Anfrage: 'Welche Voraussetzungen sind gemäß § 62 des Strahlenschutzgesetzes erforderlich für die Entlassung von überwachungsbedürftigen Rückständen?'
 Source_filename: []
 Source_path: []
 Source: 
 
 
 
-## Wie sind Meldepflichten bei überwachungsbedürftigen Rückständen gemäß §61 Abs. 2 StrlSchG zu erfüllen?
-Content: Content: Keine relevanten Dokumente wurden in der Datenbank gefunden für die Anfrage: 'Wie sind Meldepflichten bei überwachungsbedürftigen Rückständen gemäß §61 Abs. 2 StrlSchG zu erfüllen?'
+## Was regelt Anlage 7 des Strahlenschutzgesetzes bezüglich der gemeinsamen Deponierung mit anderen Rückständen und Abfällen?
+Content: Content: Keine relevanten Dokumente wurden in der Datenbank gefunden für die Anfrage: 'Was regelt Anlage 7 des Strahlenschutzgesetzes bezüglich der gemeinsamen Deponierung mit anderen Rückständen und Abfällen?'
 Source_filename: []
 Source_path: []
 Source: 
 
 
 
-## Welche Rolle spielt die Bundesregierung bei der Festlegung von Beseitigungsmethoden nach §63 Abs. 3 StrlSchG?
-Content: Content: Keine relevanten Dokumente wurden in der Datenbank gefunden für die Anfrage: 'Welche Rolle spielt die Bundesregierung bei der Festlegung von Beseitigungsmethoden nach §63 Abs. 3 StrlSchG?'
+## Wie sind Überwachungsgrenzen für Rückstände durch Rechtsverordnung nach § 62 festgelegt?
+Content: Content: Keine relevanten Dokumente wurden in der Datenbank gefunden für die Anfrage: 'Wie sind Überwachungsgrenzen für Rückstände durch Rechtsverordnung nach § 62 festgelegt?'
 Source_filename: []
 Source_path: []
 Source: 
 
 
 
-## Welche Ausnahmen oder Verlängerungen der Beseitigungsfristen sind gemäß §64 Abs. 3 StrlSchG möglich?
-Content: Content: Keine relevanten Dokumente wurden in der Datenbank gefunden für die Anfrage: 'Welche Ausnahmen oder Verlängerungen der Beseitigungsfristen sind gemäß §64 Abs. 3 StrlSchG möglich?'
+## Welche Sicherheitsmaßnahmen gemäß § 6 Abs. 2 SGG müssen getroffen werden, um das Abhandenkommen und den Zugriff durch Unbefugte zu verhindern?
+Content: Content: Keine relevanten Dokumente wurden in der Datenbank gefunden für die Anfrage: 'Welche Sicherheitsmaßnahmen gemäß § 6 Abs. 2 SGG müssen getroffen werden, um das Abhandenkommen und den Zugriff durch Unbefugte zu verhindern?'
 Source_filename: []
 Source_path: []
 Source: 
